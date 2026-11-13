@@ -159,6 +159,18 @@ if (SUPABASE_URL.startsWith('http') && !SUPABASE_ANON_KEY.startsWith('YOUR_')) {
 
 const $ = id => document.getElementById(id);
 function opts(list){ return list.map(o=>'<option>'+o+'</option>').join(''); }
+
+/* Telegram-gated access: the public submit path goes through the tg Edge Function,
+   which verifies the Telegram signature server-side. Admins (signed in) use Supabase directly. */
+const EF = String(SUPABASE_URL).replace(/\/$/,'') + '/functions/v1/tg';
+const IN_TG = !!(tg && tg.initData);
+async function tgCall(action, extra){
+  try{
+    const r = await fetch(EF,{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+SUPABASE_ANON_KEY},
+      body:JSON.stringify(Object.assign({initData:(tg&&tg.initData)||'',action},extra))});
+    return await r.json();
+  }catch(e){ return {error:'Network error: '+e}; }
+}
 /* sign-up removed — submission is open to teams; admins are created by an admin */
 
 /* ---------- auth screen ---------- */
@@ -286,6 +298,14 @@ function go(view){
 function lbl(f){ return '<label>'+f[0]+' <span class="req">*</span><span class="km">'+f[1]+'</span></label>'; }
 function viewSubmit(hostId){
   const host=$(hostId||'main'); let selectedCard=null, t=null;
+  if(!ME && !IN_TG){
+    host.innerHTML='<div class="card" style="text-align:center;padding:30px 18px">'+
+      '<div style="font-size:42px;line-height:1">📲</div>'+
+      '<h2 style="margin:10px 0 6px">Open in Telegram</h2>'+
+      '<p class="hint">For security, the submission form runs inside the Credit Card Hub Telegram bot. Please open it from Telegram to submit a delivery record.</p>'+
+      '<p class="hint" style="margin-top:8px">Admins can sign in using “Admin sign in” at the top.</p></div>';
+    return;
+  }
   host.innerHTML =
     '<h2>Submit delivery record</h2>'+
     lbl(F.holder)+'<input id="f_holder" autocomplete="off" placeholder="Type to search card holder…"><div id="hResults"></div><div class="lookup" id="lookup"></div>'+
@@ -310,9 +330,16 @@ function viewSubmit(hostId){
     const term=this.value.trim(); selectedCard=null; $('lookup').innerHTML=''; clearTimeout(t);
     if(term.length<2){$('hResults').innerHTML='';return;}
     t=setTimeout(async()=>{
-      const {data}=await sb.from('merchant_card_detail')
-        .select('id,cardholder_name,address,create_date,reason_for_reissue')
-        .ilike('cardholder_name','%'+term+'%').limit(10);
+      let data;
+      if(ME){
+        ({data}=await sb.from('merchant_card_detail')
+          .select('id,cardholder_name,address,create_date,reason_for_reissue')
+          .ilike('cardholder_name','%'+term+'%').limit(10));
+      }else{
+        const res=await tgCall('search',{q:term});
+        if(res.error){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">'+res.error+'</div>';return;}
+        data=res.data;
+      }
       if(!data||!data.length){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">No match in uploaded data.</div>';return;}
       $('hResults').innerHTML='<div class="card" style="padding:4px">'+data.map((r,i)=>
         '<div class="hopt" data-i="'+i+'" style="padding:9px;border-radius:7px;cursor:pointer">'+r.cardholder_name+' '+tag(r)+
@@ -335,13 +362,20 @@ function viewSubmit(hostId){
     for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'])
       if(!payload[k]){ popup('Please fill in all required information before submitting.'); return; }
     this.disabled=true;
-    const {data:dups}=await sb.from('submissions').select('delivery_name,created_at,status').eq('card_ref',payload.card_ref).limit(1);
-    if(dups&&dups.length){ this.disabled=false; const d=dups[0];
-      popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+new Date(d.created_at).toLocaleDateString():'')+'.'); return; }
-    const {error}=await sb.from('submissions').insert(payload);
-    this.disabled=false;
-    if(error){ popup(/duplicate|unique/i.test(error.message)?'This card has already been submitted.':/NO_MATCH/.test(error.message)?'Card holder does not match the existing data.':error.message); }
-    else { setMsg('subMsg','ok','Submitted successfully.'); viewSubmit(hostId); }
+    if(ME){
+      const {data:dups}=await sb.from('submissions').select('delivery_name,created_at,status').eq('card_ref',payload.card_ref).limit(1);
+      if(dups&&dups.length){ this.disabled=false; const d=dups[0];
+        popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+new Date(d.created_at).toLocaleDateString():'')+'.'); return; }
+      const {error}=await sb.from('submissions').insert(payload);
+      this.disabled=false;
+      if(error){ popup(/duplicate|unique/i.test(error.message)?'This card has already been submitted.':/NO_MATCH/.test(error.message)?'Card holder does not match the existing data.':error.message); }
+      else { setMsg('subMsg','ok','Submitted successfully.'); viewSubmit(hostId); }
+    }else{
+      const res=await tgCall('submit',{record:payload});
+      this.disabled=false;
+      if(res.error){ popup(res.error); }
+      else { setMsg('subMsg','ok','Submitted successfully.'); viewSubmit(hostId); }
+    }
   };
 }
 
