@@ -1,1 +1,1 @@
-# credit-card-hub
+# creditcard-hub
