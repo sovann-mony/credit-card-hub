@@ -81,6 +81,12 @@
   <div id="passRow">
     <label>Password <span class="req">*</span></label><input id="au_pass" type="password">
   </div>
+  <div id="otpRow" style="display:none">
+    <label>6-digit code <span class="req">*</span></label><input id="au_otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Enter the code from your email">
+  </div>
+  <div id="newpassRow" style="display:none">
+    <label>New password <span class="req">*</span></label><input id="au_newpass" type="password" placeholder="At least 6 characters">
+  </div>
   <button class="primary" id="authBtn">Sign in</button>
   <div id="forgotRow" style="text-align:center;margin-top:12px"><a id="toReset" style="color:var(--accent);font-weight:600;font-size:12.5px;cursor:pointer">Forgot password?</a></div>
   <div class="msg" id="authMsg"></div>
@@ -156,19 +162,25 @@ function opts(list){ return list.map(o=>'<option>'+o+'</option>').join(''); }
 /* sign-up removed — submission is open to teams; admins are created by an admin */
 
 /* ---------- auth screen ---------- */
-let authMode='signin';
+let authMode='signin', RESET_EMAIL=null;
 function setMode(m){authMode=m;renderAuth();}
 $('toReset').onclick=()=>setMode('reset');
 $('toAdmin').onclick=()=>{ $('public').style.display='none'; $('auth').style.display='block'; setMode('signin'); };
 function renderAuth(){
-  const rs=authMode==='reset';
-  $('passRow').style.display = rs?'none':'block';
-  $('forgotRow').style.display = rs?'none':'block';
+  const m=authMode;
+  $('passRow').style.display    = m==='signin'?'block':'none';
+  $('otpRow').style.display     = m==='otp'?'block':'none';
+  $('newpassRow').style.display = m==='otp'?'block':'none';
+  $('forgotRow').style.display  = m==='signin'?'block':'none';
+  $('au_login').readOnly = (m==='otp');
   $('loginLabel').innerHTML = 'Email or Staff ID <span class="req">*</span>';
-  $('authTitle').textContent = rs?'Reset password':'Admin sign in';
-  $('authSub').textContent   = rs?'We\'ll email you a reset link':'Sign in to continue';
-  $('authBtn').textContent   = rs?'Send reset link':'Sign in';
-  $('authSwitch').innerHTML  = rs ? '<a id="toSignin">← Back to sign in</a>' : '<a id="toPublic">← Back to submit</a>';
+  const T={signin:'Admin sign in', reset:'Reset password', otp:'Enter reset code'};
+  const S={signin:'Sign in to continue', reset:"We'll email you a 6-digit code", otp:'Enter the code from your email and choose a new password'};
+  const B={signin:'Sign in', reset:'Send code', otp:'Set new password & sign in'};
+  $('authTitle').textContent = T[m];
+  $('authSub').textContent   = S[m];
+  $('authBtn').textContent   = B[m];
+  $('authSwitch').innerHTML  = m==='signin' ? '<a id="toPublic">← Back to submit</a>' : '<a id="toSignin">← Back to sign in</a>';
   if($('toSignin'))$('toSignin').onclick=()=>setMode('signin');
   if($('toPublic'))$('toPublic').onclick=()=>showPublic();
 }
@@ -185,9 +197,26 @@ $('authBtn').onclick = async ()=>{
     $('authBtn').disabled=true;
     const email=await resolveEmail(id);
     if(!email){ $('authBtn').disabled=false; setMsg('authMsg','bad','Staff ID not found.'); return; }
-    const { error } = await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    const { error } = await sb.auth.signInWithOtp({ email, options:{ shouldCreateUser:false } });
     $('authBtn').disabled=false;
-    setMsg('authMsg', error?'bad':'ok', error?error.message:'If that account exists, a reset link has been sent.');
+    if(error){ setMsg('authMsg','bad',error.message); return; }
+    RESET_EMAIL=email; setMode('otp');
+    setMsg('authMsg','ok','We sent a 6-digit code to '+email+'. Enter it below with your new password.');
+    return;
+  }
+  if(authMode==='otp'){
+    const code=$('au_otp').value.trim();
+    const np=$('au_newpass').value;
+    if(!/^\d{6}$/.test(code)){ setMsg('authMsg','bad','Enter the 6-digit code from your email.'); return; }
+    if(!np||np.length<6){ setMsg('authMsg','bad','New password must be at least 6 characters.'); return; }
+    $('authBtn').disabled=true;
+    const { error } = await sb.auth.verifyOtp({ email:RESET_EMAIL, token:code, type:'email' });
+    if(error){ $('authBtn').disabled=false; setMsg('authMsg','bad', /expired|invalid/i.test(error.message)?'That code is wrong or expired. Request a new one.':error.message); return; }
+    const { error:ue } = await sb.auth.updateUser({ password:np });
+    $('authBtn').disabled=false;
+    if(ue){ setMsg('authMsg','bad','Code accepted, but setting the password failed: '+ue.message); return; }
+    try{ localStorage.setItem('cardhub_login', RESET_EMAIL); }catch(e){}
+    setMsg('authMsg','ok','Password updated — signing you in…');
     return;
   }
   const pass=$('au_pass').value;
@@ -628,6 +657,8 @@ function makeMockClient(){
     signUp:async({email})=>{_session={user:{id:'demo-signup',email:email||'new@user'}};if(_cb)_cb('SIGNED_IN',_session);return {error:null};},
     signOut:async()=>{_session=null;if(_cb)_cb('SIGNED_OUT',null);return {error:null};},
     resetPasswordForEmail:async()=>({error:null}),
+    signInWithOtp:async()=>({error:null}),
+    verifyOtp:async({email})=>{_session={user:{id:'demo-admin',email:email||'demo@admin'}};if(_cb)_cb('SIGNED_IN',_session);return {error:null};},
     updateUser:async()=>({error:null})
   }, rpc:async(name)=>({data:(name==='email_for_staff'?'demo@admin':null),error:null}) };
 }
