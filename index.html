@@ -158,6 +158,7 @@ if (SUPABASE_URL.startsWith('http') && !SUPABASE_ANON_KEY.startsWith('YOUR_')) {
 }
 
 const $ = id => document.getElementById(id);
+function escHtml(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function opts(list){ return list.map(o=>'<option>'+o+'</option>').join(''); }
 
 /* Telegram-gated access: the public submit path goes through the tg Edge Function,
@@ -276,7 +277,7 @@ async function handleSession(session){
   if(data && data.active===false){ await sb.auth.signOut(); popup('Your account has been deactivated. Please contact an administrator.'); showPublic(); return; }
   PROFILE = data || { role:'officer', full_name:ME.email };
   $('public').style.display='none'; $('auth').style.display='none'; $('app').style.display='block';
-  $('who').innerHTML = (PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
+  $('who').innerHTML = escHtml(PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
   setupNav();
 }
 function setupNav(){
@@ -337,13 +338,13 @@ function viewSubmit(hostId){
           .ilike('cardholder_name','%'+term+'%').limit(10));
       }else{
         const res=await tgCall('search',{q:term});
-        if(res.error){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">'+res.error+'</div>';return;}
+        if(res.error){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">'+escHtml(res.error)+'</div>';return;}
         data=res.data;
       }
       if(!data||!data.length){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">No match in uploaded data.</div>';return;}
       $('hResults').innerHTML='<div class="card" style="padding:4px">'+data.map((r,i)=>
-        '<div class="hopt" data-i="'+i+'" style="padding:9px;border-radius:7px;cursor:pointer">'+r.cardholder_name+' '+tag(r)+
-        ' <span class="hint">· '+(r.create_date||'')+(r.reason_for_reissue?' · '+r.reason_for_reissue:'')+'</span></div>').join('')+'</div>';
+        '<div class="hopt" data-i="'+i+'" style="padding:9px;border-radius:7px;cursor:pointer">'+escHtml(r.cardholder_name)+' '+tag(r)+
+        ' <span class="hint">· '+escHtml(r.create_date||'')+(r.reason_for_reissue?' · '+escHtml(r.reason_for_reissue):'')+'</span></div>').join('')+'</div>';
       $('hResults').querySelectorAll('.hopt').forEach(el=>el.onclick=()=>pick(data[+el.getAttribute('data-i')]));
     },300);
   });
@@ -386,12 +387,12 @@ async function viewHistory(){
   if(error){$('hist').innerHTML='<div class="empty">'+error.message+'</div>';return;}
   if(!data||!data.length){$('hist').innerHTML='<div class="empty">No submissions yet.</div>';return;}
   const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Delivery date','Card status','Remark','Status'];
-  const td=v=>'<td>'+(v==null||v===''?'—':v)+'</td>';
+  const td=v=>'<td>'+(v==null||v===''?'—':escHtml(v))+'</td>';
   const body=data.map(s=>{
     const st=s.status==='REJECTED'?'bad':'ok';
     return '<tr>'+td(new Date(s.created_at).toLocaleDateString())+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
       td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_date)+td(s.delivery_card_status)+td(s.remark)+
-      '<td><span class="pill '+st+'">'+s.status+'</span></td></tr>';
+      '<td><span class="pill '+st+'">'+escHtml(s.status)+'</span></td></tr>';
   }).join('');
   $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
@@ -408,25 +409,6 @@ async function viewDashboard(){
   $('bd').innerHTML='';
 }
 
-/* ---------- APPROVALS ---------- */
-async function viewApprovals(){
-  $('main').innerHTML='<h2>Pending approvals</h2><div id="pend"><div class="empty">Loading…</div></div>';
-  const {data,error}=await sb.from('submissions').select('*').eq('status','PENDING').order('created_at',{ascending:false});
-  if(error){$('pend').innerHTML='<div class="empty">'+error.message+'</div>';return;}
-  if(!data||!data.length){$('pend').innerHTML='<div class="empty">Nothing pending.</div>';return;}
-  $('pend').innerHTML=data.map(s=>'<div class="card">'+
-    kv('Card holder',s.card_holder_name)+kv('Delivery name',s.delivery_name)+kv('Staff ID',s.staff_id)+
-    kv('Branch',s.branch_code)+kv('Unit',s.delivery_unit)+kv('Delivery date',s.delivery_date)+kv('Card status',s.delivery_card_status)+(s.remark?kv('Remark',s.remark):'')+
-    '<div style="display:flex;gap:8px;margin-top:10px">'+
-    '<button class="btn-sm" style="flex:1;background:var(--ok)" onclick="review('+s.id+',\'APPROVED\')">Approve</button>'+
-    '<button class="btn-sm" style="flex:1;background:var(--danger)" onclick="review('+s.id+',\'REJECTED\')">Reject</button></div></div>').join('');
-}
-async function review(id,decision){
-  const {error}=await sb.from('submissions').update({status:decision,reviewed_by:ME.id,reviewed_at:new Date().toISOString()}).eq('id',id);
-  if(tg)tg.showAlert(error?error.message:('Submission '+decision.toLowerCase()+'.')); else if(error)alert(error.message);
-  viewApprovals();
-}
-
 /* ---------- SETTINGS (admin) ---------- */
 function viewSettings(){
   const subs=[['users','User Role & Permission'],['branch','Branch Code'],['unit','Delivery by (Unit)'],['status','Credit Card Status'],['holder','Card Holder Name']];
@@ -440,7 +422,7 @@ function viewSettings(){
 }
 const REFCFG={branch:{table:'ref_branch',label:'Branch Code'},unit:{table:'ref_unit',label:'Delivery by (Unit)'},status:{table:'ref_card_status',label:'Credit Card Status'}};
 async function settingsRef(key){
-  const c=REFCFG[key], body=$('setBody'), ea=s=>String(s==null?'':s).replace(/"/g,'&quot;');
+  const c=REFCFG[key], body=$('setBody'), ea=escHtml;
   body.innerHTML='<div class="empty">Loading…</div>';
   const {data,error}=await sb.from(c.table).select('*').order('label');
   if(error){body.innerHTML='<div class="empty">'+error.message+'</div>';return;}
@@ -454,7 +436,7 @@ async function settingsUsers(){
   const body=$('setBody'); body.innerHTML='<div class="empty">Loading…</div>';
   const {data,error}=await sb.from('profiles').select('*').order('created_at',{ascending:false});
   if(error){body.innerHTML='<div class="empty">'+error.message+'</div>';return;}
-  const esc=s=>(s==null?'':String(s));
+  const esc=escHtml;
   body.innerHTML='<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">Add user</div>'+
     '<input id="nu_name" placeholder="Full name"><input id="nu_staff" placeholder="Staff ID" style="margin-top:6px"><input id="nu_email" placeholder="Email" style="margin-top:6px">'+
     '<select id="nu_role" style="margin-top:6px"><option>officer</option><option>admin</option></select>'+
@@ -466,10 +448,20 @@ async function settingsUsers(){
     '<td>'+(active?'<span class="pill ok">Active</span>':'<span class="pill bad">Inactive</span>')+'</td>'+
     '<td style="white-space:nowrap"><button class="btn-xs" style="background:#6b7280;margin-right:6px" data-reset="'+p.id+'" data-email="'+esc(p.email)+'">Reset password</button>'+
       (self?'':'<button class="btn-xs" style="background:'+(active?'var(--danger)':'var(--ok)')+'" data-toggle="'+p.id+'" data-active="'+(active?'1':'0')+'">'+(active?'Deactivate':'Activate')+'</button>')+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No users.</td></tr>';
-  $('nu_add').onclick=async()=>{const name=$('nu_name').value.trim(),email=$('nu_email').value.trim();
+  $('nu_add').onclick=async function(){const name=$('nu_name').value.trim(),email=$('nu_email').value.trim();
     if(!name||!email)return popup('Enter at least a name and email.');
-    const {error}=await sb.from('profiles').insert({full_name:name,staff_id:$('nu_staff').value.trim(),email:email,role:$('nu_role').value});
-    if(error)popup('Could not add here. In the live version, create the login in Supabase Authentication first, then set the role. ('+error.message+')'); else settingsUsers();};
+    this.disabled=true;
+    const {data:{session}}=await sb.auth.getSession();
+    let res;
+    try{
+      const r=await fetch(String(SUPABASE_URL).replace(/\/$/,'')+'/functions/v1/admin-users',{method:'POST',
+        headers:{'Content-Type':'application/json','apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+(session&&session.access_token||'')},
+        body:JSON.stringify({full_name:name,staff_id:$('nu_staff').value.trim(),email:email,role:$('nu_role').value})});
+      res=await r.json();
+    }catch(e){ res={error:'Network error: '+e}; }
+    this.disabled=false;
+    if(res.error)popup(res.error); else { popup('User created. Ask them to open Admin sign in and tap "Forgot password?" to set their password.'); settingsUsers(); }
+  };
   $('uBody').querySelectorAll('[data-role]').forEach(s=>s.onchange=async()=>{const {error}=await sb.from('profiles').update({role:s.value}).eq('id',s.getAttribute('data-role'));popup(error?error.message:'Role updated.');});
   $('uBody').querySelectorAll('[data-reset]').forEach(b=>b.onclick=async()=>{const em=b.getAttribute('data-email');if(!em)return popup('This user has no email on file.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin+location.pathname});popup(error?error.message:'Password reset link sent to '+em+'.');});
   $('uBody').querySelectorAll('[data-toggle]').forEach(b=>b.onclick=async()=>{const na=b.getAttribute('data-active')!=='1';const {error}=await sb.from('profiles').update({active:na}).eq('id',b.getAttribute('data-toggle'));if(error)popup(error.message);else settingsUsers();});
@@ -488,7 +480,7 @@ function settingsHolder(){
   async function load(term){
     const {data}=await sb.from('merchant_card_detail').select('*').order('cardholder_name').limit(200);
     let rows=data||[]; if(term)rows=rows.filter(r=>String(r.cardholder_name).toLowerCase().includes(term.toLowerCase()));
-    const esc=s=>(s==null||s===''?'—':String(s));
+    const esc=s=>(s==null||s===''?'—':escHtml(s));
     $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Customer name</th><th>Type</th><th>Address</th><th>Create date</th><th>Reason</th><th>Actions</th></tr></thead><tbody>'+
       rows.map((r,i)=>'<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+i+'">Edit</button> <button class="btn-xs" style="background:var(--danger)" data-delc="'+r.id+'">Remove</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No cards.</div>';
     $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=rows[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return error.message;load($('chSearch').value.trim());});});
@@ -548,12 +540,12 @@ function renderUploader(host,onDone){
 
 /* ---------- PROFILE ---------- */
 function viewProfile(){
-  const p=PROFILE||{}, ea=s=>String(s==null?'':s).replace(/"/g,'&quot;');
+  const p=PROFILE||{}, ea=escHtml;
   const PH="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='88' height='88'><rect width='88' height='88' fill='%23e5e7eb'/><circle cx='44' cy='34' r='16' fill='%239aa3b2'/><rect x='20' y='54' width='48' height='34' rx='17' fill='%239aa3b2'/></svg>";
   let newAvatar=null;
   $('main').innerHTML='<h2>My profile</h2>'+
     '<div style="text-align:center;margin-bottom:10px">'+
-      '<img id="p_avatar" src="'+(p.avatar_url||PH)+'" style="width:88px;height:88px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)">'+
+      '<img id="p_avatar" src="'+ea(p.avatar_url||PH)+'" style="width:88px;height:88px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)">'+
       '<div><label for="p_photo" style="color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;display:inline-block;margin-top:6px">Change photo</label><input id="p_photo" type="file" accept="image/*" style="display:none"></div>'+
     '</div>'+
     '<div class="card">'+kv('Role',p.role)+'</div>'+
@@ -586,12 +578,12 @@ function viewProfile(){
     this.disabled=false;
     if(error){ setMsg('pMsg','bad',error.message); return; }
     Object.assign(PROFILE,upd); setMsg('pMsg','ok','Profile updated.'+note);
-    $('who').innerHTML=(PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
+    $('who').innerHTML=escHtml(PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
   };
 }
 
 /* ---------- helpers ---------- */
-function kv(k,v){return '<div class="row"><span class="k">'+k+'</span><span class="v">'+(v==null||v===''?'—':v)+'</span></div>';}
+function kv(k,v){return '<div class="row"><span class="k">'+k+'</span><span class="v">'+(v==null||v===''?'—':escHtml(v))+'</span></div>';}
 function stat(n,l){return '<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
 function breakdown(t,o){const ks=Object.keys(o||{});if(!ks.length)return '';return '<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">'+t+'</div>'+ks.map(k=>kv(k,o[k])).join('')+'</div>';}
 function fmt(n){return (Number(n)||0).toLocaleString();}
@@ -610,7 +602,7 @@ function editModal(title,fields,onSave){
   o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2500;padding:16px';
   o.innerHTML='<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:18px;max-height:85vh;overflow:auto">'+
     '<div style="font-weight:700;font-size:16px;margin-bottom:4px">'+title+'</div>'+
-    fields.map((f,i)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+f.label+'</label><input id="em_'+i+'" type="'+(f.type||'text')+'" value="'+String(f.value==null?'':f.value).replace(/"/g,'&quot;')+'"'+(f.readonly?' readonly style="background:#f3f4f6"':'')+'>').join('')+
+    fields.map((f,i)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+f.label+'</label><input id="em_'+i+'" type="'+(f.type||'text')+'" value="'+escHtml(f.value)+'"'+(f.readonly?' readonly style="background:#f3f4f6"':'')+'>').join('')+
     '<div style="display:flex;gap:8px;margin-top:16px"><button id="em_cancel" class="btn-sm" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button id="em_save" class="btn-sm" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
   document.body.appendChild(o);
   const close=()=>o.remove();
@@ -618,7 +610,6 @@ function editModal(title,fields,onSave){
   o.querySelector('#em_cancel').onclick=close;
   o.querySelector('#em_save').onclick=async()=>{const vals={};fields.forEach((f,i)=>vals[f.key]=o.querySelector('#em_'+i).value.trim());const err=await onSave(vals);if(err)popup(err);else close();};
 }
-window.review=review;
 
 /* ---------- demo mock (used only when no Supabase keys) ---------- */
 function makeMockClient(){
