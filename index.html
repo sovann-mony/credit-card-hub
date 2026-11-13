@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Credit Card Hub</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{--bg:#fff;--text:#1a1a1a;--hint:#8a8a8a;--card:#f3f4f6;--line:#e5e7eb;
+        --accent:#004973;--accent-text:#fff;--danger:#dc2626;--ok:#16a34a;--warn:#d97706}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+  /* layout */
+  #app{display:none;min-height:100vh}
+  .layout{display:flex;min-height:100vh}
+  .side{width:132px;flex:0 0 132px;background:#003349;color:#cbd2e0;display:flex;flex-direction:column;padding:10px 0}
+  .brand{display:flex;align-items:center;gap:9px;color:#fff;font-weight:800;font-size:15px;padding:10px 12px 14px;border-bottom:1px solid #0b3a52;margin-bottom:6px}
+  .brand .bt{display:flex;flex-direction:column;line-height:1.05}
+  .brand small{font-weight:400;color:#9aa4b8;font-size:9.5px;letter-spacing:.3px}
+  .nav{flex:1}
+  .nav a{display:block;padding:11px 14px;color:#cbd2e0;cursor:pointer;font-size:13px;font-weight:600;border-left:3px solid transparent}
+  .nav a:hover{background:#014a66}
+  .nav a.active{background:#014a66;color:#fff;border-left-color:#0088cc}
+  .nav a.hide{display:none}
+  .side .foot{padding:10px 14px;border-top:1px solid #0b3a52;font-size:12px}
+  .who{color:#9aa4b8;font-size:11px;margin-bottom:6px;line-height:1.4}
+  .signout{color:#ff9ba0;cursor:pointer;font-weight:600}
+  .main{flex:1;padding:18px;max-width:720px}
+  /* controls */
+  h2{font-size:17px;margin:0 0 14px}
+  label{display:block;font-size:12.5px;color:#374151;font-weight:600;margin:13px 0 5px}
+  label .km{display:block;color:var(--hint);font-weight:400;font-size:12px}
+  label .req{color:var(--accent)}
+  input,select,textarea{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--text);font-size:14px}
+  button.primary{width:100%;margin-top:18px;padding:12px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-text);font-size:15px;font-weight:700;cursor:pointer}
+  button.primary:disabled{opacity:.5}
+  .btn-sm{padding:8px 10px;border:0;border-radius:8px;font-weight:600;font-size:13px;color:#fff;cursor:pointer}
+  .btn-xs{padding:6px 11px;border:0;border-radius:7px;font-weight:600;font-size:12px;color:#fff;cursor:pointer;line-height:1}
+  .card{background:var(--card);border-radius:11px;padding:13px;margin-bottom:11px}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+  .row .k{color:var(--hint);font-size:12.5px}.row .v{font-weight:600;text-align:right}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat{background:var(--card);border-radius:11px;padding:13px}.stat .n{font-size:22px;font-weight:700}.stat .l{font-size:11.5px;color:var(--hint)}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700}
+  .pill.ok{background:rgba(22,163,74,.15);color:var(--ok)}.pill.warn{background:rgba(217,119,6,.15);color:var(--warn)}
+  .pill.bad{background:rgba(220,38,38,.15);color:var(--danger)}.pill.pend{background:rgba(37,99,235,.12);color:#2563eb}
+  .msg{margin-top:14px;padding:10px 12px;border-radius:9px;font-size:13.5px;display:none}.msg.show{display:block}
+  .msg.ok{background:rgba(22,163,74,.12);color:var(--ok)}.msg.bad{background:rgba(220,38,38,.12);color:var(--danger)}
+  .hint{color:var(--hint);font-size:12px;margin-top:4px}.lookup{margin-top:8px;font-size:13px;min-height:18px}
+  .empty{color:var(--hint);text-align:center;padding:28px 0}
+  .htable{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap}
+  .htable th,.htable td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left}
+  .htable th{color:var(--hint);font-weight:600;background:var(--card)}
+  .setTab{padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--text);font-weight:600;font-size:12.5px;cursor:pointer}
+  .setTab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .banner{background:rgba(217,119,6,.12);color:var(--warn);padding:8px 14px;font-size:12px;text-align:center}
+  /* auth screen */
+  #auth{max-width:380px;margin:6vh auto;padding:20px}
+  #auth h1{font-size:19px;margin:0 0 4px}#auth p.sub{color:var(--hint);margin:0 0 14px;font-size:13px}
+  .switch{margin-top:14px;text-align:center;font-size:13px;color:var(--hint)}.switch a{color:var(--accent);font-weight:700;cursor:pointer}
+  .seg{flex:1;padding:9px;border:0;background:#fff;color:var(--text);font-weight:600;font-size:13px;cursor:pointer}
+  .seg.active{background:var(--accent);color:#fff}
+  @media(max-width:520px){.side{width:108px;flex-basis:108px}.main{padding:14px}}
+</style>
+</head>
+<body>
+<div class="banner" id="cfgBanner" style="display:none">⚠️ Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of index.html</div>
+
+<!-- AUTH -->
+<div id="auth" style="display:none">
+  <div style="text-align:center;margin-bottom:16px">
+    <svg width="60" height="60" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="cg2" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop stop-color="#0a6aa0"/><stop offset="1" stop-color="#002b42"/></linearGradient></defs><rect x="2" y="2" width="44" height="44" rx="12" fill="url(#cg2)"/><g transform="rotate(-18 24 36)"><rect x="17" y="14" width="14" height="20" rx="2.5" fill="#3f6f93"/></g><g transform="rotate(18 24 36)"><rect x="17" y="14" width="14" height="20" rx="2.5" fill="#3f6f93"/></g><rect x="17" y="12" width="14" height="20" rx="2.5" fill="#fff"/><rect x="17" y="15" width="14" height="2.4" fill="#0088cc"/></svg>
+    <div style="font-weight:800;font-size:22px;margin-top:8px">Credit Card Hub</div>
+  </div>
+  <h1 id="authTitle">Sign in</h1>
+  <p class="sub" id="authSub">Sign in to continue</p>
+
+  <label id="loginLabel">Email or Staff ID <span class="req">*</span></label><input id="au_login" autocomplete="username" placeholder="name@ababank.com or Staff ID">
+  <div id="passRow">
+    <label>Password <span class="req">*</span></label><input id="au_pass" type="password">
+  </div>
+  <button class="primary" id="authBtn">Sign in</button>
+  <div id="forgotRow" style="text-align:center;margin-top:12px"><a id="toReset" style="color:var(--accent);font-weight:600;font-size:12.5px;cursor:pointer">Forgot password?</a></div>
+  <div class="msg" id="authMsg"></div>
+  <div class="switch" id="authSwitch"><a id="toPublic">← Back to submit</a></div>
+</div>
+
+<!-- PUBLIC SUBMIT (no login needed; teams submit here) -->
+<div id="public" style="display:none;max-width:560px;margin:0 auto;padding:0 16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--line);margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px"><svg width="24" height="24" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="cg3" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop stop-color="#0a6aa0"/><stop offset="1" stop-color="#002b42"/></linearGradient></defs><rect x="2" y="2" width="44" height="44" rx="12" fill="url(#cg3)"/><g transform="rotate(-18 24 36)"><rect x="17" y="14" width="14" height="20" rx="2.5" fill="#3f6f93"/></g><g transform="rotate(18 24 36)"><rect x="17" y="14" width="14" height="20" rx="2.5" fill="#3f6f93"/></g><rect x="17" y="12" width="14" height="20" rx="2.5" fill="#fff"/><rect x="17" y="15" width="14" height="2.4" fill="#0088cc"/></svg><span>Credit Card Hub</span></div>
+    <a id="toAdmin" style="color:var(--accent);font-weight:600;font-size:13px;cursor:pointer">Admin sign in</a>
+  </div>
+  <div id="publicMain"></div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="layout">
+    <div class="side">
+      <div class="brand"><svg width="26" height="26" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="cg1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop stop-color="#0a6aa0"/><stop offset="1" stop-color="#002b42"/></linearGradient></defs><rect x="2" y="2" width="44" height="44" rx="12" fill="url(#cg1)"/><g transform="rotate(-18 24 36)"><rect x="17" y="14" width="14" height="20" rx="2.5" fill="#3f6f93"/></g><g transform="rotate(18 24 36)"><rect x="17" y="14" width="14" height="20" rx="2.5" fill="#3f6f93"/></g><rect x="17" y="12" width="14" height="20" rx="2.5" fill="#fff"/><rect x="17" y="15" width="14" height="2.4" fill="#0088cc"/></svg><span class="bt">Credit Card Hub</span></div>
+      <div class="nav" id="nav">
+        <a data-view="submit"    data-roles="officer,admin">📝 Submit</a>
+        <a data-view="history"   data-roles="officer,admin">🕑 History</a>
+        <a data-view="dashboard" data-roles="officer,admin">📊 Dashboard</a>
+        <a data-view="profile"   data-roles="officer,admin">👤 Profile</a>
+        <a data-view="settings"  data-roles="admin">⚙️ Settings</a>
+      </div>
+      <div class="foot">
+        <div class="who" id="who"></div>
+        <span class="signout" id="signout">Sign out</span>
+      </div>
+    </div>
+    <div class="main" id="main"></div>
+  </div>
+</div>
+
+<script>
+/* ===========================================================================
+ * CONFIG — paste your Supabase values, and replace the dropdown options.
+ * ======================================================================== */
+const SUPABASE_URL      = "https://jfhqsxfkujbqqjwgmrff.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_0VWIhVLqhvKZQ87a4icwmQ_bU5XhfRE";
+
+const OPTIONS = {               // <-- replace with your real lists
+  branch:     ["001 - Head Office", "002 - Branch 2", "003 - Branch 3"],
+  unit:       ["Team A", "Team B", "Team C"],
+  cardStatus: ["Delivered", "Not Delivered", "Returned", "Activated"]
+};
+
+/* field labels (English + Khmer subtitle) */
+const F = {
+  holder: ["Card Holder Name", "ឈ្មោះម្ចាស់កាត"],
+  branch: ["Branch Code (Staff)", "លេខកូដសាខា"],
+  dname:  ["Delivery Name", "ឈ្មោះអ្នកដឹកកាត"],
+  staff:  ["Staff ID", "លេខសម្គាល់បុគ្គលិក"],
+  unit:   ["Delivery by (Unit)", "ដឹកកាតដោយ (ក្រុម)"],
+  date:   ["Delivery Date", "កាលបរិច្ឆេទដឹកកាត"],
+  status: ["Credit Card Status", "ស្ថានភាពកាតឥណទាន"]
+};
+/* --------------------------------------------------------------------------- */
+const tg = window.Telegram ? window.Telegram.WebApp : null; if (tg){tg.ready();tg.expand();}
+let sb=null, ME=null, PROFILE=null, DEMO=false;
+if (SUPABASE_URL.startsWith('http') && !SUPABASE_ANON_KEY.startsWith('YOUR_')) {
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+} else {
+  DEMO = true; sb = makeMockClient();
+  const b=document.getElementById('cfgBanner'); b.style.display='block';
+  b.textContent='Demo mode — sample data, no backend. Add your Supabase keys in index.html to go live.';
+}
+
+const $ = id => document.getElementById(id);
+function opts(list){ return list.map(o=>'<option>'+o+'</option>').join(''); }
+/* sign-up removed — submission is open to teams; admins are created by an admin */
+
+/* ---------- auth screen ---------- */
+let authMode='signin';
+function setMode(m){authMode=m;renderAuth();}
+$('toReset').onclick=()=>setMode('reset');
+$('toAdmin').onclick=()=>{ $('public').style.display='none'; $('auth').style.display='block'; setMode('signin'); };
+function renderAuth(){
+  const rs=authMode==='reset';
+  $('passRow').style.display = rs?'none':'block';
+  $('forgotRow').style.display = rs?'none':'block';
+  $('loginLabel').innerHTML = 'Email or Staff ID <span class="req">*</span>';
+  $('authTitle').textContent = rs?'Reset password':'Admin sign in';
+  $('authSub').textContent   = rs?'We\'ll email you a reset link':'Sign in to continue';
+  $('authBtn').textContent   = rs?'Send reset link':'Sign in';
+  $('authSwitch').innerHTML  = rs ? '<a id="toSignin">← Back to sign in</a>' : '<a id="toPublic">← Back to submit</a>';
+  if($('toSignin'))$('toSignin').onclick=()=>setMode('signin');
+  if($('toPublic'))$('toPublic').onclick=()=>showPublic();
+}
+async function resolveEmail(val){
+  if(val.includes('@')) return val;
+  const { data } = await sb.rpc('email_for_staff',{ p_staff_id: val });
+  return data || null;
+}
+$('authBtn').onclick = async ()=>{
+  if(!sb){ setMsg('authMsg','bad','Supabase keys not set.'); return; }
+  const id=$('au_login').value.trim();
+  if(authMode==='reset'){
+    if(!id){ setMsg('authMsg','bad','Enter your email or Staff ID.'); return; }
+    $('authBtn').disabled=true;
+    const email=await resolveEmail(id);
+    if(!email){ $('authBtn').disabled=false; setMsg('authMsg','bad','Staff ID not found.'); return; }
+    const { error } = await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    $('authBtn').disabled=false;
+    setMsg('authMsg', error?'bad':'ok', error?error.message:'If that account exists, a reset link has been sent.');
+    return;
+  }
+  const pass=$('au_pass').value;
+  if(!id||!pass){ setMsg('authMsg','bad','Enter your email/Staff ID and password.'); return; }
+  $('authBtn').disabled=true;
+  const email=await resolveEmail(id);
+  if(!email){ $('authBtn').disabled=false; setMsg('authMsg','bad','Staff ID not found.'); return; }
+  const { error } = await sb.auth.signInWithPassword({ email, password:pass });
+  $('authBtn').disabled=false;
+  if(error){ setMsg('authMsg','bad',error.message); return; }
+  try{ localStorage.setItem('cardhub_login', id); }catch(e){}
+};
+try{ const _rl=localStorage.getItem('cardhub_login'); if(_rl) $('au_login').value=_rl; }catch(e){}
+$('signout').onclick = async ()=>{ if(sb) await sb.auth.signOut(); };
+
+/* ---------- session ---------- */
+function showPublic(){
+  ME=null;PROFILE=null;
+  $('app').style.display='none'; $('auth').style.display='none'; $('public').style.display='block';
+  renderAuth(); viewSubmit('publicMain');
+}
+async function loadOptions(){
+  try{
+    const [b,u,s]=await Promise.all([
+      sb.from('ref_branch').select('label').order('label'),
+      sb.from('ref_unit').select('label').order('label'),
+      sb.from('ref_card_status').select('label')
+    ]);
+    if(b.data&&b.data.length)OPTIONS.branch=b.data.map(r=>r.label);
+    if(u.data&&u.data.length)OPTIONS.unit=u.data.map(r=>r.label);
+    if(s.data&&s.data.length)OPTIONS.cardStatus=s.data.map(r=>r.label);
+  }catch(e){}
+}
+async function boot(){
+  if(!sb){ showPublic(); return; }
+  await loadOptions();
+  const { data:{ session } } = await sb.auth.getSession();
+  sb.auth.onAuthStateChange((_e,s)=>{ handleSession(s); });
+  handleSession(session);
+}
+async function handleSession(session){
+  if(!session){ showPublic(); return; }
+  ME=session.user;
+  const { data } = await sb.from('profiles').select('*').eq('id',ME.id).single();
+  if(data && data.active===false){ await sb.auth.signOut(); popup('Your account has been deactivated. Please contact an administrator.'); showPublic(); return; }
+  PROFILE = data || { role:'officer', full_name:ME.email };
+  $('public').style.display='none'; $('auth').style.display='none'; $('app').style.display='block';
+  $('who').innerHTML = (PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
+  setupNav();
+}
+function setupNav(){
+  const role = PROFILE.role;
+  let first=null;
+  document.querySelectorAll('#nav a').forEach(a=>{
+    const allowed = a.getAttribute('data-roles').split(',').includes(role);
+    a.classList.toggle('hide',!allowed);
+    if(allowed){ if(!first) first=a; a.onclick=()=>go(a.getAttribute('data-view')); }
+  });
+  if(first) go(first.getAttribute('data-view'));
+}
+function go(view){
+  document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.getAttribute('data-view')===view));
+  ({submit:viewSubmit,history:viewHistory,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
+}
+
+/* ---------- SUBMIT ---------- */
+function lbl(f){ return '<label>'+f[0]+' <span class="req">*</span><span class="km">'+f[1]+'</span></label>'; }
+function viewSubmit(hostId){
+  const host=$(hostId||'main'); let selectedCard=null, t=null;
+  host.innerHTML =
+    '<h2>Submit delivery record</h2>'+
+    lbl(F.holder)+'<input id="f_holder" autocomplete="off" placeholder="Type to search card holder…"><div id="hResults"></div><div class="lookup" id="lookup"></div>'+
+    lbl(F.branch)+'<select id="f_branch"><option value="">Select…</option>'+opts(OPTIONS.branch)+'<option value="__other">Other…</option></select>'+
+      '<input id="f_branch_other" placeholder="Enter branch code" style="display:none;margin-top:6px">'+
+    lbl(F.dname)+'<input id="f_dname">'+
+    lbl(F.staff)+'<input id="f_staff">'+
+    lbl(F.unit)+'<select id="f_unit"><option value="">Select…</option>'+opts(OPTIONS.unit)+'<option value="__other">Other…</option></select>'+
+      '<input id="f_unit_other" placeholder="Enter unit / team" style="display:none;margin-top:6px">'+
+    lbl(F.date)+'<input id="f_date" type="date">'+
+    lbl(F.status)+'<select id="f_status"><option value="">Select…</option>'+opts(OPTIONS.cardStatus)+'</select>'+
+    '<label>Remark <span class="km">កំណត់សម្គាល់</span></label><textarea id="f_remark" rows="2" placeholder="Optional"></textarea>'+
+    '<button class="primary" id="subBtn">Submit</button><div class="msg" id="subMsg"></div>'+
+    '<p class="hint">Pick the card holder from the search list — only names in the uploaded data can be submitted, and each card can be submitted once.</p>';
+  const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
+  function pick(r){
+    selectedCard=r; $('f_holder').value=r.cardholder_name; $('hResults').innerHTML='';
+    $('lookup').innerHTML='<span class="pill ok">Selected</span> '+tag(r)+'<div class="card" style="margin-top:8px">'+
+      kv('Card holder',r.cardholder_name)+kv('Address',r.address)+kv('Created in TWCMS',r.create_date)+kv('Reason for reissue',r.reason_for_reissue||'— (new card)')+'</div>';
+  }
+  $('f_holder').addEventListener('input',function(){
+    const term=this.value.trim(); selectedCard=null; $('lookup').innerHTML=''; clearTimeout(t);
+    if(term.length<2){$('hResults').innerHTML='';return;}
+    t=setTimeout(async()=>{
+      const {data}=await sb.from('merchant_card_detail')
+        .select('id,cardholder_name,address,create_date,reason_for_reissue')
+        .ilike('cardholder_name','%'+term+'%').limit(10);
+      if(!data||!data.length){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">No match in uploaded data.</div>';return;}
+      $('hResults').innerHTML='<div class="card" style="padding:4px">'+data.map((r,i)=>
+        '<div class="hopt" data-i="'+i+'" style="padding:9px;border-radius:7px;cursor:pointer">'+r.cardholder_name+' '+tag(r)+
+        ' <span class="hint">· '+(r.create_date||'')+(r.reason_for_reissue?' · '+r.reason_for_reissue:'')+'</span></div>').join('')+'</div>';
+      $('hResults').querySelectorAll('.hopt').forEach(el=>el.onclick=()=>pick(data[+el.getAttribute('data-i')]));
+    },300);
+  });
+  $('f_branch').onchange=function(){$('f_branch_other').style.display=this.value==='__other'?'block':'none';};
+  $('f_unit').onchange=function(){$('f_unit_other').style.display=this.value==='__other'?'block':'none';};
+  $('subBtn').onclick=async function(){
+    if(!selectedCard){ popup('Card holder name does not match the existing data. Please pick a valid card holder from the list.'); return; }
+    const branch=$('f_branch').value==='__other'?$('f_branch_other').value.trim():$('f_branch').value;
+    const unit=$('f_unit').value==='__other'?$('f_unit_other').value.trim():$('f_unit').value;
+    const payload={
+      card_ref:String(selectedCard.id), card_holder_name:selectedCard.cardholder_name,
+      branch_code:branch, delivery_name:$('f_dname').value, staff_id:$('f_staff').value,
+      delivery_unit:unit, delivery_date:$('f_date').value||null, delivery_card_status:$('f_status').value,
+      remark:$('f_remark').value||null
+    };
+    for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'])
+      if(!payload[k]){ popup('Please fill in all required information before submitting.'); return; }
+    this.disabled=true;
+    const {data:dups}=await sb.from('submissions').select('delivery_name,created_at,status').eq('card_ref',payload.card_ref).limit(1);
+    if(dups&&dups.length){ this.disabled=false; const d=dups[0];
+      popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+new Date(d.created_at).toLocaleDateString():'')+'.'); return; }
+    const {error}=await sb.from('submissions').insert(payload);
+    this.disabled=false;
+    if(error){ popup(/duplicate|unique/i.test(error.message)?'This card has already been submitted.':/NO_MATCH/.test(error.message)?'Card holder does not match the existing data.':error.message); }
+    else { setMsg('subMsg','ok','Submitted successfully.'); viewSubmit(hostId); }
+  };
+}
+
+/* ---------- HISTORY ---------- */
+async function viewHistory(){
+  $('main').innerHTML='<h2>History</h2><div id="hist"><div class="empty">Loading…</div></div>';
+  const {data,error}=await sb.from('submissions').select('*').order('created_at',{ascending:false});
+  if(error){$('hist').innerHTML='<div class="empty">'+error.message+'</div>';return;}
+  if(!data||!data.length){$('hist').innerHTML='<div class="empty">No submissions yet.</div>';return;}
+  const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Delivery date','Card status','Remark','Status'];
+  const td=v=>'<td>'+(v==null||v===''?'—':v)+'</td>';
+  const body=data.map(s=>{
+    const st=s.status==='REJECTED'?'bad':'ok';
+    return '<tr>'+td(new Date(s.created_at).toLocaleDateString())+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
+      td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_date)+td(s.delivery_card_status)+td(s.remark)+
+      '<td><span class="pill '+st+'">'+s.status+'</span></td></tr>';
+  }).join('');
+  $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+}
+
+/* ---------- DASHBOARD ---------- */
+async function viewDashboard(){
+  $('main').innerHTML='<h2>Dashboard</h2><div class="grid" id="stats"><div class="empty">Loading…</div></div><div id="bd"></div>';
+  const {data,error}=await sb.from('merchant_card_detail').select('cardholder_name,reason_for_reissue');
+  if(error){$('stats').innerHTML='<div class="empty">'+error.message+'</div>';return;}
+  const rows=data||[]; const isNew=r=>!(r.reason_for_reissue&&String(r.reason_for_reissue).trim());
+  const news=rows.filter(isNew).length, reissues=rows.length-news;
+  const {data:subd}=await sb.from('submissions').select('id');
+  $('stats').innerHTML=stat(rows.length,'Total cards')+stat(news,'New cards')+stat(reissues,'Reissues')+stat((subd||[]).length,'Submissions');
+  $('bd').innerHTML='';
+}
+
+/* ---------- APPROVALS ---------- */
+async function viewApprovals(){
+  $('main').innerHTML='<h2>Pending approvals</h2><div id="pend"><div class="empty">Loading…</div></div>';
+  const {data,error}=await sb.from('submissions').select('*').eq('status','PENDING').order('created_at',{ascending:false});
+  if(error){$('pend').innerHTML='<div class="empty">'+error.message+'</div>';return;}
+  if(!data||!data.length){$('pend').innerHTML='<div class="empty">Nothing pending.</div>';return;}
+  $('pend').innerHTML=data.map(s=>'<div class="card">'+
+    kv('Card holder',s.card_holder_name)+kv('Delivery name',s.delivery_name)+kv('Staff ID',s.staff_id)+
+    kv('Branch',s.branch_code)+kv('Unit',s.delivery_unit)+kv('Delivery date',s.delivery_date)+kv('Card status',s.delivery_card_status)+(s.remark?kv('Remark',s.remark):'')+
+    '<div style="display:flex;gap:8px;margin-top:10px">'+
+    '<button class="btn-sm" style="flex:1;background:var(--ok)" onclick="review('+s.id+',\'APPROVED\')">Approve</button>'+
+    '<button class="btn-sm" style="flex:1;background:var(--danger)" onclick="review('+s.id+',\'REJECTED\')">Reject</button></div></div>').join('');
+}
+async function review(id,decision){
+  const {error}=await sb.from('submissions').update({status:decision,reviewed_by:ME.id,reviewed_at:new Date().toISOString()}).eq('id',id);
+  if(tg)tg.showAlert(error?error.message:('Submission '+decision.toLowerCase()+'.')); else if(error)alert(error.message);
+  viewApprovals();
+}
+
+/* ---------- SETTINGS (admin) ---------- */
+function viewSettings(){
+  const subs=[['users','User Role & Permission'],['branch','Branch Code'],['unit','Delivery by (Unit)'],['status','Credit Card Status'],['holder','Card Holder Name']];
+  $('main').innerHTML='<h2>Settings</h2><div id="setTabs" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+
+    subs.map(s=>'<button class="setTab" data-s="'+s[0]+'">'+s[1]+'</button>').join('')+'</div><div id="setBody"></div>';
+  const tabs=$('setTabs').querySelectorAll('.setTab');
+  function open(key){ tabs.forEach(t=>t.classList.toggle('active',t.getAttribute('data-s')===key));
+    if(key==='users')settingsUsers(); else if(key==='holder')settingsHolder(); else settingsRef(key); }
+  tabs.forEach(t=>t.onclick=()=>open(t.getAttribute('data-s')));
+  open('users');
+}
+const REFCFG={branch:{table:'ref_branch',label:'Branch Code'},unit:{table:'ref_unit',label:'Delivery by (Unit)'},status:{table:'ref_card_status',label:'Credit Card Status'}};
+async function settingsRef(key){
+  const c=REFCFG[key], body=$('setBody'), ea=s=>String(s==null?'':s).replace(/"/g,'&quot;');
+  body.innerHTML='<div class="empty">Loading…</div>';
+  const {data,error}=await sb.from(c.table).select('*').order('label');
+  if(error){body.innerHTML='<div class="empty">'+error.message+'</div>';return;}
+  body.innerHTML='<div style="display:flex;gap:8px;margin-bottom:12px"><input id="newRef" placeholder="Add '+c.label+'…" style="flex:1"><button class="btn-sm" style="background:var(--accent);padding:10px 14px" id="addRef">Add</button></div><div id="refList"></div>';
+  $('refList').innerHTML=(data&&data.length)?data.map(r=>'<div class="card" style="display:flex;align-items:center;gap:8px;padding:10px"><span style="flex:1">'+ea(r.label)+'</span><button class="btn-sm" style="background:var(--ok)" data-edit="'+r.id+'">Edit</button><button class="btn-sm" style="background:var(--danger)" data-del="'+r.id+'">Remove</button></div>').join(''):'<div class="empty">No items yet.</div>';
+  $('addRef').onclick=async()=>{const v=$('newRef').value.trim();if(!v)return popup('Enter a value.');const {error}=await sb.from(c.table).insert({label:v});if(error)popup(error.message);else{await loadOptions();settingsRef(key);}};
+  body.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const id=b.getAttribute('data-edit');const row=(data||[]).find(x=>String(x.id)===id);editModal('Edit '+c.label,[{key:'label',label:c.label,value:row.label}],async v=>{if(!v.label)return 'Enter a value.';const {error}=await sb.from(c.table).update({label:v.label}).eq('id',id);if(error)return error.message;await loadOptions();settingsRef(key);});});
+  body.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const {error}=await sb.from(c.table).delete().eq('id',b.getAttribute('data-del'));if(error)popup(error.message);else{await loadOptions();settingsRef(key);}});
+}
+async function settingsUsers(){
+  const body=$('setBody'); body.innerHTML='<div class="empty">Loading…</div>';
+  const {data,error}=await sb.from('profiles').select('*').order('created_at',{ascending:false});
+  if(error){body.innerHTML='<div class="empty">'+error.message+'</div>';return;}
+  const esc=s=>(s==null?'':String(s));
+  body.innerHTML='<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">Add user</div>'+
+    '<input id="nu_name" placeholder="Full name"><input id="nu_staff" placeholder="Staff ID" style="margin-top:6px"><input id="nu_email" placeholder="Email" style="margin-top:6px">'+
+    '<select id="nu_role" style="margin-top:6px"><option>officer</option><option>admin</option></select>'+
+    '<button class="btn-sm" style="background:var(--accent);margin-top:8px;padding:9px 14px" id="nu_add">Add user</button></div>'+
+    '<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Name</th><th>Email</th><th>Staff ID</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody id="uBody"></tbody></table></div>';
+  $('uBody').innerHTML=(data||[]).map(p=>{const active=p.active!==false,self=ME&&ME.id===p.id;return '<tr>'+
+    '<td>'+esc(p.full_name||'—')+'</td><td>'+esc(p.email||'—')+'</td><td>'+esc(p.staff_id||'—')+'</td>'+
+    '<td><select data-role="'+p.id+'">'+['officer','admin'].map(r=>'<option '+(r===p.role?'selected':'')+'>'+r+'</option>').join('')+'</select></td>'+
+    '<td>'+(active?'<span class="pill ok">Active</span>':'<span class="pill bad">Inactive</span>')+'</td>'+
+    '<td style="white-space:nowrap"><button class="btn-xs" style="background:#6b7280;margin-right:6px" data-reset="'+p.id+'" data-email="'+esc(p.email)+'">Reset password</button>'+
+      (self?'':'<button class="btn-xs" style="background:'+(active?'var(--danger)':'var(--ok)')+'" data-toggle="'+p.id+'" data-active="'+(active?'1':'0')+'">'+(active?'Deactivate':'Activate')+'</button>')+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No users.</td></tr>';
+  $('nu_add').onclick=async()=>{const name=$('nu_name').value.trim(),email=$('nu_email').value.trim();
+    if(!name||!email)return popup('Enter at least a name and email.');
+    const {error}=await sb.from('profiles').insert({full_name:name,staff_id:$('nu_staff').value.trim(),email:email,role:$('nu_role').value});
+    if(error)popup('Could not add here. In the live version, create the login in Supabase Authentication first, then set the role. ('+error.message+')'); else settingsUsers();};
+  $('uBody').querySelectorAll('[data-role]').forEach(s=>s.onchange=async()=>{const {error}=await sb.from('profiles').update({role:s.value}).eq('id',s.getAttribute('data-role'));popup(error?error.message:'Role updated.');});
+  $('uBody').querySelectorAll('[data-reset]').forEach(b=>b.onclick=async()=>{const em=b.getAttribute('data-email');if(!em)return popup('This user has no email on file.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin+location.pathname});popup(error?error.message:'Password reset link sent to '+em+'.');});
+  $('uBody').querySelectorAll('[data-toggle]').forEach(b=>b.onclick=async()=>{const na=b.getAttribute('data-active')!=='1';const {error}=await sb.from('profiles').update({active:na}).eq('id',b.getAttribute('data-toggle'));if(error)popup(error.message);else settingsUsers();});
+}
+function settingsHolder(){
+  const body=$('setBody');
+  body.innerHTML='<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Upload daily card data</div><div id="upWrap"></div></div>'+
+    '<div style="margin:12px 0"><input id="chSearch" placeholder="Search card holder…" style="width:100%"></div>'+
+    '<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Add a card</div>'+
+      '<label>Customer name (card holder) *</label><input id="ch_name">'+
+      '<label>Address</label><input id="ch_addr">'+
+      '<label>Creating in TWCMS (date)</label><input id="ch_date" type="date">'+
+      '<label>Reason for reissue</label><input id="ch_reason" placeholder="Leave blank for a new card">'+
+      '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div><div id="chList"></div>';
+  const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
+  async function load(term){
+    const {data}=await sb.from('merchant_card_detail').select('*').order('cardholder_name').limit(200);
+    let rows=data||[]; if(term)rows=rows.filter(r=>String(r.cardholder_name).toLowerCase().includes(term.toLowerCase()));
+    const esc=s=>(s==null||s===''?'—':String(s));
+    $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Customer name</th><th>Type</th><th>Address</th><th>Create date</th><th>Reason</th><th>Actions</th></tr></thead><tbody>'+
+      rows.map((r,i)=>'<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+i+'">Edit</button> <button class="btn-xs" style="background:var(--danger)" data-delc="'+r.id+'">Remove</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No cards.</div>';
+    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=rows[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return error.message;load($('chSearch').value.trim());});});
+    $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',b.getAttribute('data-delc'));if(error)popup(error.message);else load($('chSearch').value.trim());});
+  }
+  renderUploader($('upWrap'),()=>load($('chSearch').value.trim()));
+  $('ch_save').onclick=async()=>{const name=$('ch_name').value.trim();
+    if(!name)return popup('Customer name is required.');
+    const row={cardholder_name:name,address:$('ch_addr').value.trim(),create_date:$('ch_date').value||null,reason_for_reissue:$('ch_reason').value.trim()||null};
+    const {error}=await sb.from('merchant_card_detail').insert(row);
+    if(error)popup(/duplicate|unique/i.test(error.message)?'This customer already has a new card — a new card can exist only once. For another card, add a Reason for reissue.':error.message);
+    else{['ch_name','ch_addr','ch_date','ch_reason'].forEach(i=>$(i).value='');load($('chSearch').value.trim());}};
+  $('chSearch').oninput=()=>load($('chSearch').value.trim());
+  load('');
+}
+
+/* ---------- UPLOADER (reused inside Settings → Card Holder Name) ---------- */
+function renderUploader(host,onDone){
+  host.innerHTML=
+    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), address, create_date (creating in TWCMS), reason_for_reissue (blank = new).</p>'+
+    '<input type="file" id="f_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
+    '<div id="upPrev"></div>'+
+    '<button class="primary" id="upBtn" disabled>Upload &amp; merge</button>'+
+    '<div class="msg" id="upMsg"></div>';
+  let parsed=null;
+  const FIELDS=['cardholder_name','address','create_date','reason_for_reissue'];
+  const MAP={cardholdername:'cardholder_name',customername:'cardholder_name',customer:'cardholder_name',name:'cardholder_name',cardholder:'cardholder_name',address:'address',location:'address',createdate:'create_date',creatingintwcms:'create_date',createdintwcms:'create_date',createddate:'create_date',twcms:'create_date',reasonforreissue:'reason_for_reissue',reissuereason:'reason_for_reissue',reason:'reason_for_reissue',reissue:'reason_for_reissue'};
+  const norm=h=>String(h).toLowerCase().replace(/[^a-z0-9]/g,'');
+  $('f_file').onchange=function(){
+    const file=this.files&&this.files[0]; if(!file)return;
+    const r=new FileReader();
+    r.onload=e=>{ try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      const raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+      if(!raw.length){ popup('The file has no rows.'); return; }
+      parsed=raw.map(row=>{const o={};Object.keys(row).forEach(k=>{const n=norm(k);const f=MAP[n]||(FIELDS.indexOf(n)>=0?n:null);if(f)o[f]=typeof row[k]==='string'?row[k].trim():row[k];});return o;}).filter(o=>o.cardholder_name);
+      if(!parsed.length){ popup('No valid rows found. The file needs a cardholder_name (customer name) column.'); return; }
+      $('upPrev').innerHTML='<div class="card" style="margin-top:10px">'+kv('Rows found',parsed.length)+kv('Sample',parsed.slice(0,3).map(p=>p.cardholder_name+(p.reason_for_reissue?' (reissue)':' (new)')).join(', '))+'</div>';
+      $('upBtn').disabled=false;
+    }catch(err){ popup('Could not read the file: '+err.message); } };
+    r.readAsArrayBuffer(file);
+  };
+  $('upBtn').onclick=async function(){
+    if(!parsed||!parsed.length)return; this.disabled=true; setMsg('upMsg','ok','Uploading…');
+    const {data:existing}=await sb.from('merchant_card_detail').select('cardholder_name,reason_for_reissue');
+    const newNames=new Set((existing||[]).filter(r=>!(r.reason_for_reissue&&String(r.reason_for_reissue).trim())).map(r=>String(r.cardholder_name).trim().toLowerCase()));
+    let toInsert=[],skipped=0;
+    parsed.forEach(p=>{const reason=(p.reason_for_reissue&&String(p.reason_for_reissue).trim())||null;const isNew=!reason;const key=String(p.cardholder_name).trim().toLowerCase();
+      if(isNew&&newNames.has(key)){skipped++;return;} if(isNew)newNames.add(key);
+      toInsert.push({cardholder_name:p.cardholder_name,address:p.address||null,create_date:p.create_date||null,reason_for_reissue:reason});});
+    let error=null; if(toInsert.length){ const res=await sb.from('merchant_card_detail').insert(toInsert); error=res.error; }
+    this.disabled=false;
+    if(error){ setMsg('upMsg','bad',error.message); popup('Upload failed: '+error.message); }
+    else { setMsg('upMsg','ok',toInsert.length+' added'+(skipped?', '+skipped+' skipped (new card already exists)':'')+'.'); $('f_file').value=''; $('upPrev').innerHTML=''; if(onDone)onDone(); }
+  };
+}
+
+/* ---------- PROFILE ---------- */
+function viewProfile(){
+  const p=PROFILE||{}, ea=s=>String(s==null?'':s).replace(/"/g,'&quot;');
+  const PH="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='88' height='88'><rect width='88' height='88' fill='%23e5e7eb'/><circle cx='44' cy='34' r='16' fill='%239aa3b2'/><rect x='20' y='54' width='48' height='34' rx='17' fill='%239aa3b2'/></svg>";
+  let newAvatar=null;
+  $('main').innerHTML='<h2>My profile</h2>'+
+    '<div style="text-align:center;margin-bottom:10px">'+
+      '<img id="p_avatar" src="'+(p.avatar_url||PH)+'" style="width:88px;height:88px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)">'+
+      '<div><label for="p_photo" style="color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;display:inline-block;margin-top:6px">Change photo</label><input id="p_photo" type="file" accept="image/*" style="display:none"></div>'+
+    '</div>'+
+    '<div class="card">'+kv('Role',p.role)+'</div>'+
+    '<label>Full name</label><input id="p_name" value="'+ea(p.full_name)+'">'+
+    '<label>Staff ID</label><input id="p_staff" value="'+ea(p.staff_id)+'">'+
+    '<label>Contact number</label><input id="p_phone" value="'+ea(p.phone)+'">'+
+    '<label>Email</label><input id="p_email" type="email" value="'+ea(p.email||ME.email)+'">'+
+    '<button class="primary" id="pSave">Save changes</button><div class="msg" id="pMsg"></div>';
+  $('p_photo').onchange=function(){
+    const f=this.files&&this.files[0]; if(!f)return;
+    const rd=new FileReader(); rd.onload=e=>{ const img=new Image(); img.onload=()=>{
+      const sz=220, sc=Math.min(sz/img.width,sz/img.height,1), c=document.createElement('canvas');
+      c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      newAvatar=c.toDataURL('image/jpeg',0.82); $('p_avatar').src=newAvatar;
+    }; img.src=e.target.result; }; rd.readAsDataURL(f);
+  };
+  $('pSave').onclick=async function(){
+    this.disabled=true;
+    const upd={full_name:$('p_name').value,staff_id:$('p_staff').value,phone:$('p_phone').value};
+    if(newAvatar)upd.avatar_url=newAvatar;
+    const {error}=await sb.from('profiles').update(upd).eq('id',ME.id);
+    let note='';
+    const em=$('p_email').value.trim();
+    if(!error && em && em!==(p.email||ME.email)){
+      const {error:ee}=await sb.auth.updateUser({email:em});
+      if(ee) note=' (email unchanged: '+ee.message+')';
+      else { await sb.from('profiles').update({email:em}).eq('id',ME.id); PROFILE.email=em; note=' Check your inbox to confirm the new email.'; }
+    }
+    this.disabled=false;
+    if(error){ setMsg('pMsg','bad',error.message); return; }
+    Object.assign(PROFILE,upd); setMsg('pMsg','ok','Profile updated.'+note);
+    $('who').innerHTML=(PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
+  };
+}
+
+/* ---------- helpers ---------- */
+function kv(k,v){return '<div class="row"><span class="k">'+k+'</span><span class="v">'+(v==null||v===''?'—':v)+'</span></div>';}
+function stat(n,l){return '<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
+function breakdown(t,o){const ks=Object.keys(o||{});if(!ks.length)return '';return '<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">'+t+'</div>'+ks.map(k=>kv(k,o[k])).join('')+'</div>';}
+function fmt(n){return (Number(n)||0).toLocaleString();}
+function setMsg(id,cls,text){const m=$(id);m.className='msg show '+cls;m.textContent=text;}
+function popup(msg){ if(tg&&tg.showAlert){try{tg.showAlert(String(msg));return;}catch(e){}}
+  let o=$('popupBox');
+  if(!o){ o=document.createElement('div'); o.id='popupBox';
+    o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2000;padding:20px';
+    o.innerHTML='<div style="background:#fff;border-radius:12px;max-width:340px;width:100%;padding:18px;text-align:center"><div id="popupMsg" style="color:#1a1a1a;font-size:14px;line-height:1.5;margin-bottom:14px"></div><button id="popupOk" style="background:var(--accent);color:#fff;border:0;border-radius:9px;padding:9px 22px;font-weight:700;cursor:pointer">OK</button></div>';
+    document.body.appendChild(o); o.querySelector('#popupOk').onclick=()=>{o.style.display='none';};
+  }
+  $('popupMsg').textContent=String(msg); o.style.display='flex';
+}
+function editModal(title,fields,onSave){
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2500;padding:16px';
+  o.innerHTML='<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:18px;max-height:85vh;overflow:auto">'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:4px">'+title+'</div>'+
+    fields.map((f,i)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+f.label+'</label><input id="em_'+i+'" type="'+(f.type||'text')+'" value="'+String(f.value==null?'':f.value).replace(/"/g,'&quot;')+'"'+(f.readonly?' readonly style="background:#f3f4f6"':'')+'>').join('')+
+    '<div style="display:flex;gap:8px;margin-top:16px"><button id="em_cancel" class="btn-sm" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button id="em_save" class="btn-sm" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
+  document.body.appendChild(o);
+  const close=()=>o.remove();
+  o.addEventListener('click',e=>{if(e.target===o)close();});
+  o.querySelector('#em_cancel').onclick=close;
+  o.querySelector('#em_save').onclick=async()=>{const vals={};fields.forEach((f,i)=>vals[f.key]=o.querySelector('#em_'+i).value.trim());const err=await onSave(vals);if(err)popup(err);else close();};
+}
+window.review=review;
+
+/* ---------- demo mock (used only when no Supabase keys) ---------- */
+function makeMockClient(){
+  const cards=[
+    {id:1,cardholder_name:'SOK DARA',address:'#12 St. 51, Phnom Penh',create_date:'2026-11-01',reason_for_reissue:''},
+    {id:2,cardholder_name:'SOK DARA',address:'#12 St. 51, Phnom Penh',create_date:'2026-11-10',reason_for_reissue:'Lost card'},
+    {id:3,cardholder_name:'CHAN THIDA',address:'#88 St. 271, Phnom Penh',create_date:'2026-11-05',reason_for_reissue:''},
+    {id:4,cardholder_name:'LIM SOPHEA',address:'#5 St. 110, Siem Reap',create_date:'2026-11-07',reason_for_reissue:''}
+  ];
+  const profiles=[
+    {id:'demo-admin',full_name:'Demo Admin',email:'demo@admin',staff_id:'A000',branch_code:'001 - Head Office',unit:'Team A',role:'admin',created_at:new Date().toISOString()},
+    {id:'u2',full_name:'Officer Two',email:'o2@bank',staff_id:'O102',branch_code:'002 - Branch 2',unit:'Team B',role:'officer',created_at:new Date().toISOString()},
+    {id:'u3',full_name:'Officer One',email:'o1@bank',staff_id:'O201',branch_code:'001 - Head Office',unit:'Team A',role:'officer',created_at:new Date().toISOString()}
+  ];
+  const subs=[
+    {id:1,created_at:new Date().toISOString(),submitted_by:'u2',card_ref:'1',card_holder_name:'SOK DARA',branch_code:'002 - Branch 2',delivery_name:'Delivery One',staff_id:'D101',delivery_unit:'Team B',delivery_date:'2026-11-12',delivery_card_status:'Delivered',remark:'',status:'SUBMITTED'}
+  ];
+  const ref_branch=OPTIONS.branch.map((l,i)=>({id:'b'+i,label:l}));
+  const ref_unit=OPTIONS.unit.map((l,i)=>({id:'u'+i,label:l}));
+  const ref_card_status=OPTIONS.cardStatus.map((l,i)=>({id:'c'+i,label:l}));
+  const db={merchant_card_detail:cards, submissions:subs, profiles:profiles, ref_branch:ref_branch, ref_unit:ref_unit, ref_card_status:ref_card_status};
+  function run(st){
+    try{
+      if(st.op==='delete'){ const a=db[st.table]; if(a){for(let i=a.length-1;i>=0;i--){if(st.filters.every(([c,v])=>String(a[i][c])===String(v)))a.splice(i,1);}} return {error:null}; }
+      if(st.op==='upsert'){
+        const arr=Array.isArray(st.payload)?st.payload:[st.payload];
+        if(st.table==='merchant_card_detail') arr.forEach(row=>{const i=row.id!=null?cards.findIndex(c=>String(c.id)===String(row.id)):-1;if(i>=0)Object.assign(cards[i],row);else cards.push(Object.assign({id:'x'+Date.now()+Math.floor(Math.random()*1000)},row));});
+        return {error:null};
+      }
+      if(st.op==='insert'){
+        const p=st.payload;
+        if(st.table==='submissions'){
+          const m=cards.find(c=>String(c.id)===String(p.card_ref));
+          if(!m) return {error:{message:'NO_MATCH card not in uploaded data'}};
+          if(subs.some(s=>String(s.card_ref)===String(p.card_ref))) return {error:{message:'duplicate: card already submitted'}};
+          subs.unshift({id:Date.now(),created_at:new Date().toISOString(),submitted_by:'public',status:'SUBMITTED',card_ref:p.card_ref,
+            card_holder_name:m.cardholder_name,branch_code:p.branch_code,delivery_name:p.delivery_name,staff_id:p.staff_id,
+            delivery_unit:p.delivery_unit,delivery_date:p.delivery_date,delivery_card_status:p.delivery_card_status,remark:p.remark});
+          return {error:null};
+        }
+        const arr=Array.isArray(p)?p:[p]; const a=db[st.table];
+        if(st.table==='merchant_card_detail'){ for(const row of arr){ const isNew=!(row.reason_for_reissue&&String(row.reason_for_reissue).trim()); if(isNew&&cards.some(c=>String(c.cardholder_name).trim().toLowerCase()===String(row.cardholder_name).trim().toLowerCase()&&!(c.reason_for_reissue&&String(c.reason_for_reissue).trim()))) return {error:{message:'duplicate: new card already exists'}}; } }
+        if(a) arr.forEach(row=>a.unshift(Object.assign({id:'x'+Date.now()+Math.floor(Math.random()*1000),created_at:new Date().toISOString()},row)));
+        return {error:null};
+      }
+      let rows=db[st.table].slice();
+      if(st.op==='update'){
+        db[st.table].filter(r=>st.filters.every(([c,v])=>String(r[c])===String(v))).forEach(r=>Object.assign(r,st.payload));
+        return {error:null};
+      }
+      st.filters.forEach(([c,v])=>rows=rows.filter(r=>String(r[c])===String(v)));
+      st.ilikes.forEach(([c,v])=>{const term=String(v).replace(/%/g,'').toLowerCase();rows=rows.filter(r=>String(r[c]).toLowerCase().includes(term));});
+      if(st.limitN)rows=rows.slice(0,st.limitN);
+      return st.single?{data:rows[0]||null,error:null}:{data:rows,error:null};
+    }catch(e){return {error:{message:String(e)}};}
+  }
+  function builder(table){
+    const st={table,op:'select',filters:[],ilikes:[],limitN:null,single:false,payload:null};
+    const api={select(){return api;},insert(p){st.op='insert';st.payload=p;return api;},upsert(p){st.op='upsert';st.payload=p;return api;},
+      update(p){st.op='update';st.payload=p;return api;},delete(){st.op='delete';return api;},eq(c,v){st.filters.push([c,v]);return api;},
+      ilike(c,v){st.ilikes.push([c,v]);return api;},order(){return api;},limit(n){st.limitN=n;return api;},
+      single(){st.single=true;return api;},then(res){res(run(st));}};
+    return api;
+  }
+  let _session=null,_cb=null;
+  return { from:builder, auth:{
+    getSession:async()=>({data:{session:_session}}),
+    onAuthStateChange:(cb)=>{_cb=cb;return {data:{subscription:{unsubscribe(){}}}};},
+    signInWithPassword:async({email})=>{_session={user:{id:'demo-admin',email:email||'demo@admin'}};if(_cb)_cb('SIGNED_IN',_session);return {error:null};},
+    signUp:async({email})=>{_session={user:{id:'demo-signup',email:email||'new@user'}};if(_cb)_cb('SIGNED_IN',_session);return {error:null};},
+    signOut:async()=>{_session=null;if(_cb)_cb('SIGNED_OUT',null);return {error:null};},
+    resetPasswordForEmail:async()=>({error:null}),
+    updateUser:async()=>({error:null})
+  }, rpc:async(name)=>({data:(name==='email_for_staff'?'demo@admin':null),error:null}) };
+}
+
+boot();
+</script>
+</body>
+</html>
