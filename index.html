@@ -12,24 +12,35 @@
 <style>
   :root{--bg:#fff;--text:#1a1a1a;--hint:#8a8a8a;--card:#f3f4f6;--line:#e5e7eb;
         --accent:#004973;--accent-text:#fff;--danger:#dc2626;--ok:#16a34a;--warn:#d97706;--logo:url("logo.png")}
+  body.dark{--bg:#0f1720;--text:#e8edf2;--hint:#8b97a7;--card:#1a2330;--line:#2b3747;--accent:#2f93cc;--accent-text:#fff}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
   /* layout */
   #app{display:none;min-height:100vh}
-  .layout{display:flex;min-height:100vh;max-width:1040px;margin:0 auto}
-  .side{width:184px;flex:0 0 184px;background:#003349;color:#cbd2e0;display:flex;flex-direction:column;padding:10px 0}
+  .layout{display:flex;min-height:100vh;max-width:1560px;margin:0 auto}
+  .side{width:210px;flex:0 0 210px;background:#003349;color:#cbd2e0;display:flex;flex-direction:column;padding:10px 0}
   .brand{display:flex;align-items:center;gap:9px;color:#fff;font-weight:800;font-size:15px;padding:10px 12px 14px;border-bottom:1px solid #0b3a52;margin-bottom:6px}
   .brand .bt{display:flex;flex-direction:column;line-height:1.05}
   .brand small{font-weight:400;color:#9aa4b8;font-size:9.5px;letter-spacing:.3px}
   .nav{flex:1}
-  .nav a{display:block;padding:11px 14px;color:#cbd2e0;cursor:pointer;font-size:13px;font-weight:600;border-left:3px solid transparent}
+  .nav a{display:flex;align-items:center;gap:10px;padding:11px 16px;color:#cbd2e0;cursor:pointer;font-size:13.5px;font-weight:600;border-left:3px solid transparent}
+  .nav a .ic{font-size:16px;line-height:1;width:20px;text-align:center}
+  .nav a .lb{flex:1}
   .nav a:hover{background:#014a66}
   .nav a.active{background:#014a66;color:#fff;border-left-color:#0088cc}
   .nav a.hide{display:none}
-  .side .foot{padding:10px 14px;border-top:1px solid #0b3a52;font-size:12px}
-  .who{color:#9aa4b8;font-size:11px;margin-bottom:6px;line-height:1.4}
-  .signout{color:#ff9ba0;cursor:pointer;font-weight:600}
-  .main{flex:1;padding:26px 36px;max-width:760px}
+  .content{flex:1;display:flex;flex-direction:column;min-width:0}
+  .topbar{display:flex;align-items:center;gap:12px;padding:10px 24px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0;z-index:30}
+  .tb-brand{display:none;align-items:center;gap:8px;font-weight:800;font-size:15px;color:var(--text)}
+  .tb-right{display:flex;align-items:center;gap:14px;margin-left:auto}
+  .themebtn{width:36px;height:36px;border:1px solid var(--line);background:var(--card);border-radius:50%;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;color:var(--text)}
+  .userchip{display:flex;align-items:center;gap:10px}
+  .avatar{width:38px;height:38px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)}
+  .ubx{display:flex;flex-direction:column;line-height:1.2}
+  .uname{font-weight:700;font-size:13.5px;color:var(--text)}
+  .urole{font-size:11px;color:var(--hint);text-transform:capitalize}
+  .signout{color:var(--danger);cursor:pointer;font-weight:600;font-size:13px}
+  .main{flex:1;padding:28px 44px;max-width:1080px;width:100%;margin:0 auto}
   /* controls */
   h2{font-size:17px;margin:0 0 14px}
   label{display:block;font-size:12.5px;color:#374151;font-weight:600;margin:13px 0 5px}
@@ -66,14 +77,17 @@
   .seg.active{background:var(--accent);color:#fff}
   @media(max-width:767px){
     .layout{flex-direction:column;max-width:none;margin:0}
-    .side{flex-direction:row;align-items:center;justify-content:space-between;width:100%;flex:none;height:54px;padding:0 12px;position:sticky;top:0;z-index:40}
-    .side .brand{padding:0;margin:0;border:0}
-    .side .brand .bt{font-size:14px}
-    .side .logo-sm{width:24px;height:24px}
-    .side .foot{padding:0;margin:0;border:0;display:flex;align-items:center}
-    .side .who{display:none}
-    .nav{position:fixed;left:0;right:0;bottom:0;z-index:50;flex:none;display:flex;flex-direction:row;background:#003349;border-top:1px solid #0b3a52;box-shadow:0 -2px 10px rgba(0,0,0,.25)}
-    .nav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:7px 2px;border-left:0;border-top:3px solid transparent;font-size:10px;line-height:1.15;text-align:center}
+    .side{flex:none;width:100%;height:0;padding:0;background:none}
+    .side .brand{display:none}
+    .topbar{padding:9px 14px}
+    .tb-brand{display:flex}
+    .tb-brand .logo-sm{width:24px;height:24px}
+    .tb-right{gap:10px}
+    .userchip .ubx{display:none}
+    .nav{position:fixed;left:0;right:0;bottom:0;z-index:50;flex:none;display:flex;flex-direction:row;background:#003349;border-top:1px solid #0b3a52;box-shadow:0 -2px 10px rgba(0,0,0,.25);padding:0}
+    .nav a{flex:1;flex-direction:column;gap:3px;padding:8px 2px;border-left:0;border-top:3px solid transparent;font-size:10px;line-height:1.1;text-align:center}
+    .nav a .ic{font-size:20px;width:auto}
+    .nav a .lb{flex:none}
     .nav a.active{background:#014a66;color:#fff;border-left-color:transparent;border-top-color:#0088cc}
     .main{flex:none;max-width:none;margin:0;padding:16px 14px 82px}
   }
@@ -131,18 +145,28 @@
     <div class="side">
       <div class="brand"><div class="logo-sm"></div><span class="bt">Credit Card Hub</span></div>
       <div class="nav" id="nav">
-        <a data-view="submit"    data-roles="officer,admin">📝 Submit</a>
-        <a data-view="history"   data-roles="officer,admin">🕑 History</a>
-        <a data-view="dashboard" data-roles="officer,admin">📊 Dashboard</a>
-        <a data-view="profile"   data-roles="officer,admin">👤 Profile</a>
-        <a data-view="settings"  data-roles="admin">⚙️ Settings</a>
-      </div>
-      <div class="foot">
-        <div class="who" id="who"></div>
-        <span class="signout" id="signout">Sign out</span>
+        <a data-view="submit"    data-roles="officer,admin"><span class="ic">📝</span><span class="lb">Submit</span></a>
+        <a data-view="history"   data-roles="officer,admin"><span class="ic">🕑</span><span class="lb">History</span></a>
+        <a data-view="dashboard" data-roles="officer,admin"><span class="ic">📊</span><span class="lb">Dashboard</span></a>
+        <a data-view="profile"   data-roles="officer,admin"><span class="ic">👤</span><span class="lb">Profile</span></a>
+        <a data-view="settings"  data-roles="admin"><span class="ic">⚙️</span><span class="lb">Settings</span></a>
       </div>
     </div>
-    <div class="main" id="main"></div>
+    <div class="content">
+      <div class="topbar">
+        <div class="tb-brand"><div class="logo-sm"></div><span>Credit Card Hub</span></div>
+        <div class="tb-right">
+          <button class="themebtn" id="themeBtn" title="Toggle light/dark" aria-label="Toggle theme">🌙</button>
+          <div class="userchip">
+            <img class="avatar" id="tbAvatar" alt="">
+            <div class="ubx"><div class="uname" id="uname"></div><div class="urole" id="urole"></div></div>
+          </div>
+          <span class="signout" id="signout">Sign out</span>
+        </div>
+      </div>
+      <div class="main" id="main"></div>
+    </div>
+  </div>
   </div>
 </div>
 
@@ -172,6 +196,7 @@ const F = {
 /* --------------------------------------------------------------------------- */
 const tg = window.Telegram ? window.Telegram.WebApp : null; if (tg){tg.ready();tg.expand();}
 let sb=null, ME=null, PROFILE=null, DEMO=false;
+const AV_PH="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect width='80' height='80' fill='%23e5e7eb'/><circle cx='40' cy='31' r='15' fill='%239aa3b2'/><rect x='17' y='49' width='46' height='32' rx='16' fill='%239aa3b2'/></svg>";
 if (SUPABASE_URL.startsWith('http') && !SUPABASE_ANON_KEY.startsWith('YOUR_')) {
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 } else {
@@ -300,7 +325,9 @@ async function handleSession(session){
   if(data && data.active===false){ await sb.auth.signOut(); popup('Your account has been deactivated. Please contact an administrator.'); showPublic(); return; }
   PROFILE = data || { role:'officer', full_name:ME.email };
   $('public').style.display='none'; $('auth').style.display='none'; $('app').style.display='block';
-  $('who').innerHTML = escHtml(PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
+  $('uname').textContent = PROFILE.full_name||ME.email;
+  $('urole').textContent = PROFILE.role||'';
+  $('tbAvatar').src = PROFILE.avatar_url||AV_PH;
   setupNav();
 }
 function setupNav(){
@@ -608,7 +635,7 @@ function viewProfile(){
     this.disabled=false;
     if(error){ setMsg('pMsg','bad',error.message); return; }
     Object.assign(PROFILE,upd); setMsg('pMsg','ok','Profile updated.'+note);
-    $('who').innerHTML=escHtml(PROFILE.full_name||ME.email)+'<br><span class="pill pend">'+PROFILE.role+'</span>';
+    $('uname').textContent=PROFILE.full_name||ME.email; if(newAvatar)$('tbAvatar').src=newAvatar;
   };
 }
 
@@ -727,6 +754,10 @@ function makeMockClient(){
   }, rpc:async(name)=>({data:(name==='email_for_staff'?'demo@admin':null),error:null}) };
 }
 
+/* theme toggle */
+function applyTheme(t){ document.body.classList.toggle('dark', t==='dark'); const b=$('themeBtn'); if(b)b.textContent=t==='dark'?'\u2600\uFE0F':'\uD83C\uDF19'; }
+(function(){ let t='light'; try{t=localStorage.getItem('cc_theme')||'light';}catch(e){} applyTheme(t); })();
+if($('themeBtn')) $('themeBtn').onclick=function(){ const dark=!document.body.classList.contains('dark'); const t=dark?'dark':'light'; try{localStorage.setItem('cc_theme',t);}catch(e){} applyTheme(t); };
 boot();
 </script>
 </body>
