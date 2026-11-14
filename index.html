@@ -131,7 +131,7 @@ const SUPABASE_URL      = "https://jfhqsxfkujbqqjwgmrff.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_0VWIhVLqhvKZQ87a4icwmQ_bU5XhfRE";
 
 const OPTIONS = {               // <-- replace with your real lists
-  branch:     ["001 - Head Office", "002 - Branch 2", "003 - Branch 3"],
+  branch:     ["100", "101", "102"],
   unit:       ["Team A", "Team B", "Team C"],
   cardStatus: ["Delivered", "Not Delivered", "Returned", "Activated"]
 };
@@ -311,9 +311,9 @@ function viewSubmit(hostId){
     '<h2>Submit delivery record</h2>'+
     lbl(F.holder)+'<input id="f_holder" autocomplete="off" placeholder="Type to search card holder…"><div id="hResults"></div><div class="lookup" id="lookup"></div>'+
     lbl(F.branch)+'<select id="f_branch"><option value="">Select…</option>'+opts(OPTIONS.branch)+'<option value="__other">Other…</option></select>'+
-      '<input id="f_branch_other" placeholder="Enter branch code" style="display:none;margin-top:6px">'+
+      '<input id="f_branch_other" inputmode="numeric" placeholder="Enter branch code (numbers only)" style="display:none;margin-top:6px">'+
     lbl(F.dname)+'<input id="f_dname">'+
-    lbl(F.staff)+'<input id="f_staff">'+
+    lbl(F.staff)+'<input id="f_staff" inputmode="numeric" placeholder="Numbers only">'+
     lbl(F.unit)+'<select id="f_unit"><option value="">Select…</option>'+opts(OPTIONS.unit)+'<option value="__other">Other…</option></select>'+
       '<input id="f_unit_other" placeholder="Enter unit / team" style="display:none;margin-top:6px">'+
     lbl(F.date)+'<input id="f_date" type="date">'+
@@ -324,6 +324,7 @@ function viewSubmit(hostId){
   const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
   function pick(r){
     selectedCard=r; $('f_holder').value=r.cardholder_name; $('hResults').innerHTML='';
+    if($('f_date')) $('f_date').min = r.create_date || '';
     $('lookup').innerHTML='<span class="pill ok">Selected</span> '+tag(r)+'<div class="card" style="margin-top:8px">'+
       kv('Card holder',r.cardholder_name)+kv('Address',r.address)+kv('Created in TWCMS',r.create_date)+kv('Reason for reissue',r.reason_for_reissue||'— (new card)')+'</div>';
   }
@@ -356,12 +357,18 @@ function viewSubmit(hostId){
     const unit=$('f_unit').value==='__other'?$('f_unit_other').value.trim():$('f_unit').value;
     const payload={
       card_ref:String(selectedCard.id), card_holder_name:selectedCard.cardholder_name,
-      branch_code:branch, delivery_name:$('f_dname').value, staff_id:$('f_staff').value,
+      branch_code:branch, delivery_name:$('f_dname').value.trim(), staff_id:$('f_staff').value.trim(),
       delivery_unit:unit, delivery_date:$('f_date').value||null, delivery_card_status:$('f_status').value,
-      remark:$('f_remark').value||null
+      remark:$('f_remark').value.trim()||null
     };
     for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'])
       if(!payload[k]){ popup('Please fill in all required information before submitting.'); return; }
+    if(!/^\d+$/.test(payload.branch_code)){ popup('Branch Code must be a number.'); return; }
+    if(!/^\d+$/.test(payload.staff_id)){ popup('Staff ID must be a number.'); return; }
+    if(selectedCard.create_date && payload.delivery_date && payload.delivery_date < selectedCard.create_date){
+      popup('Delivery Date cannot be earlier than the card\'s create date ('+selectedCard.create_date+').'); return; }
+    if(payload.delivery_card_status.trim().toLowerCase()!=='delivered' && !payload.remark){
+      popup('Remark is required when the status is not "Delivered".'); return; }
     this.disabled=true;
     if(ME){
       const {data:dups}=await sb.from('submissions').select('delivery_name,created_at,status').eq('card_ref',payload.card_ref).limit(1);
@@ -369,7 +376,7 @@ function viewSubmit(hostId){
         popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+new Date(d.created_at).toLocaleDateString():'')+'.'); return; }
       const {error}=await sb.from('submissions').insert(payload);
       this.disabled=false;
-      if(error){ popup(/duplicate|unique/i.test(error.message)?'This card has already been submitted.':/NO_MATCH/.test(error.message)?'Card holder does not match the existing data.':error.message); }
+      if(error){ popup(subErr(error.message)); }
       else { setMsg('subMsg','ok','Submitted successfully.'); viewSubmit(hostId); }
     }else{
       const res=await tgCall('submit',{record:payload});
@@ -583,6 +590,15 @@ function viewProfile(){
 }
 
 /* ---------- helpers ---------- */
+function subErr(m){ m=String(m||'');
+  if(/duplicate|unique/i.test(m)) return 'This card has already been submitted.';
+  if(/NO_MATCH/.test(m))   return 'Card holder does not match the existing data.';
+  if(/BAD_BRANCH/.test(m)) return 'Branch Code must be a number.';
+  if(/BAD_STAFF/.test(m))  return 'Staff ID must be a number.';
+  if(/BAD_DATE/.test(m))   return 'Delivery Date cannot be earlier than the card\'s create date.';
+  if(/NEED_REMARK/.test(m))return 'Remark is required when the status is not "Delivered".';
+  return m;
+}
 function kv(k,v){return '<div class="row"><span class="k">'+k+'</span><span class="v">'+(v==null||v===''?'—':escHtml(v))+'</span></div>';}
 function stat(n,l){return '<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
 function breakdown(t,o){const ks=Object.keys(o||{});if(!ks.length)return '';return '<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">'+t+'</div>'+ks.map(k=>kv(k,o[k])).join('')+'</div>';}
@@ -625,7 +641,7 @@ function makeMockClient(){
     {id:'u3',full_name:'Officer One',email:'o1@bank',staff_id:'O201',branch_code:'001 - Head Office',unit:'Team A',role:'officer',created_at:new Date().toISOString()}
   ];
   const subs=[
-    {id:1,created_at:new Date().toISOString(),submitted_by:'u2',card_ref:'1',card_holder_name:'SOK DARA',branch_code:'002 - Branch 2',delivery_name:'Delivery One',staff_id:'D101',delivery_unit:'Team B',delivery_date:'2026-11-12',delivery_card_status:'Delivered',remark:'',status:'SUBMITTED'}
+    {id:1,created_at:new Date().toISOString(),submitted_by:'u2',card_ref:'1',card_holder_name:'SOK DARA',branch_code:'101',delivery_name:'Delivery One',staff_id:'1001',delivery_unit:'Team B',delivery_date:'2026-11-12',delivery_card_status:'Delivered',remark:'',status:'SUBMITTED'}
   ];
   const ref_branch=OPTIONS.branch.map((l,i)=>({id:'b'+i,label:l}));
   const ref_unit=OPTIONS.unit.map((l,i)=>({id:'u'+i,label:l}));
