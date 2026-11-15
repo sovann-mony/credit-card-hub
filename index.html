@@ -147,6 +147,7 @@
       <div class="nav" id="nav">
         <a data-view="submit"    data-roles="officer,admin"><span class="ic">📝</span><span class="lb">Submit</span></a>
         <a data-view="history"   data-roles="officer,admin"><span class="ic">🕑</span><span class="lb">History</span></a>
+        <a data-view="cards"     data-roles="admin"><span class="ic">💳</span><span class="lb">Card Holders</span></a>
         <a data-view="dashboard" data-roles="officer,admin"><span class="ic">📊</span><span class="lb">Dashboard</span></a>
         <a data-view="profile"   data-roles="officer,admin"><span class="ic">👤</span><span class="lb">Profile</span></a>
         <a data-view="settings"  data-roles="admin"><span class="ic">⚙️</span><span class="lb">Settings</span></a>
@@ -342,7 +343,7 @@ function setupNav(){
 }
 function go(view){
   document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.getAttribute('data-view')===view));
-  ({submit:viewSubmit,history:viewHistory,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
+  ({submit:viewSubmit,history:viewHistory,cards:viewCards,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
 }
 
 /* ---------- SUBMIT ---------- */
@@ -467,13 +468,17 @@ async function viewDashboard(){
 }
 
 /* ---------- SETTINGS (admin) ---------- */
+function viewCards(){
+  $('main').innerHTML='<h2>Card Holder Name</h2><div id="setBody"></div>';
+  settingsHolder();
+}
 function viewSettings(){
-  const subs=[['users','User Role & Permission'],['branch','Branch Code'],['unit','Delivery by (Unit)'],['status','Credit Card Status'],['holder','Card Holder Name']];
+  const subs=[['users','User Role & Permission'],['branch','Branch Code'],['unit','Delivery by (Unit)'],['status','Credit Card Status']];
   $('main').innerHTML='<h2>Settings</h2><div id="setTabs" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+
     subs.map(s=>'<button class="setTab" data-s="'+s[0]+'">'+s[1]+'</button>').join('')+'</div><div id="setBody"></div>';
   const tabs=$('setTabs').querySelectorAll('.setTab');
   function open(key){ tabs.forEach(t=>t.classList.toggle('active',t.getAttribute('data-s')===key));
-    if(key==='users')settingsUsers(); else if(key==='holder')settingsHolder(); else settingsRef(key); }
+    if(key==='users')settingsUsers(); else settingsRef(key); }
   tabs.forEach(t=>t.onclick=()=>open(t.getAttribute('data-s')));
   open('users');
 }
