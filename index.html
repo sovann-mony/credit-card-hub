@@ -147,7 +147,7 @@
       <div class="nav" id="nav">
         <a data-view="submit"    data-roles="officer,admin"><span class="ic">📝</span><span class="lb">Submit</span></a>
         <a data-view="history"   data-roles="officer,admin"><span class="ic">🕑</span><span class="lb">History</span></a>
-        <a data-view="cards"     data-roles="admin"><span class="ic">💳</span><span class="lb">Card Holders</span></a>
+        <a data-view="cards"     data-roles="admin"><span class="ic">💳</span><span class="lb">Card Data</span></a>
         <a data-view="dashboard" data-roles="officer,admin"><span class="ic">📊</span><span class="lb">Dashboard</span></a>
         <a data-view="profile"   data-roles="officer,admin"><span class="ic">👤</span><span class="lb">Profile</span></a>
         <a data-view="settings"  data-roles="admin"><span class="ic">⚙️</span><span class="lb">Settings</span></a>
@@ -469,7 +469,7 @@ async function viewDashboard(){
 
 /* ---------- SETTINGS (admin) ---------- */
 function viewCards(){
-  $('main').innerHTML='<h2>Card Holder Name</h2><div id="setBody"></div>';
+  $('main').innerHTML='<h2>Card Data</h2><div id="setBody"></div>';
   settingsHolder();
 }
 function viewSettings(){
