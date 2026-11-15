@@ -349,7 +349,7 @@ function go(view){
 /* ---------- SUBMIT ---------- */
 function lbl(f){ return '<label>'+f[0]+' <span class="req">*</span><span class="km">'+f[1]+'</span></label>'; }
 function viewSubmit(hostId){
-  const host=$(hostId||'main'); let selectedCard=null, t=null;
+  const host=$(hostId||'main');
   if(!ME && !IN_TG){
     host.innerHTML='<div class="card" style="text-align:center;padding:30px 18px">'+
       '<div style="font-size:42px;line-height:1">📲</div>'+
@@ -358,8 +358,18 @@ function viewSubmit(hostId){
       '<p class="hint" style="margin-top:8px">Admins can sign in using “Admin sign in” at the top.</p></div>';
     return;
   }
+  host.innerHTML='<h2>Submit delivery record</h2>'+
+    (ME?'<div id="subTabs" style="display:flex;gap:6px;margin-bottom:14px"><button class="setTab active" id="tabSingle">Single entry</button><button class="setTab" id="tabUpload">Upload file</button></div>':'')+
+    '<div id="subArea"></div>';
+  if(ME){
+    $('tabSingle').onclick=()=>{$('tabSingle').classList.add('active');$('tabUpload').classList.remove('active');submitSingle($('subArea'));};
+    $('tabUpload').onclick=()=>{$('tabUpload').classList.add('active');$('tabSingle').classList.remove('active');submitUploader($('subArea'));};
+  }
+  submitSingle($('subArea'));
+}
+function submitSingle(host){
+  let selectedCard=null, t=null;
   host.innerHTML =
-    '<h2>Submit delivery record</h2>'+
     lbl(F.holder)+'<input id="f_holder" autocomplete="off" placeholder="Type to search card holder…"><div id="hResults"></div><div class="lookup" id="lookup"></div>'+
     lbl(F.branch)+'<select id="f_branch"><option value="">Select…</option>'+opts(OPTIONS.branch)+'<option value="__other">Other…</option></select>'+
       '<input id="f_branch_other" inputmode="numeric" placeholder="Enter branch code (numbers only)" style="display:none;margin-top:6px">'+
@@ -428,17 +438,79 @@ function viewSubmit(hostId){
       const {error}=await sb.from('submissions').insert(payload);
       this.disabled=false;
       if(error){ popup(subErr(error.message)); }
-      else { setMsg('subMsg','ok','Submitted successfully.'); viewSubmit(hostId); }
+      else { setMsg('subMsg','ok','Submitted successfully.'); submitSingle(host); }
     }else{
       const res=await tgCall('submit',{record:payload});
       this.disabled=false;
       if(res.error){ popup(res.error); }
-      else { setMsg('subMsg','ok','Submitted successfully.'); viewSubmit(hostId); }
+      else { setMsg('subMsg','ok','Submitted successfully.'); submitSingle(host); }
     }
   };
 }
 
 /* ---------- HISTORY ---------- */
+function submitUploader(host){
+  host.innerHTML=
+    '<p class="hint">Upload a CSV or Excel file — each row becomes one delivery record. Required columns: <b>cardholder_name</b> (must match Card Data), <b>branch_code</b> (number), <b>delivery_name</b>, <b>staff_id</b> (number), <b>delivery_unit</b>, <b>delivery_date</b> (YYYY-MM-DD, not before the card create date), <b>delivery_card_status</b>. Optional: <b>remark</b> (required unless status is Delivered), <b>reason_for_reissue</b> (to pick a specific card when a name has more than one).</p>'+
+    '<input type="file" id="s_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
+    '<div id="sPrev"></div>'+
+    '<button class="primary" id="sUpBtn" disabled>Validate &amp; submit</button>'+
+    '<div class="msg" id="sUpMsg"></div><div id="sUpResult"></div>';
+  let parsed=null;
+  const MAP={cardholdername:'cardholder_name',customername:'cardholder_name',customer:'cardholder_name',name:'cardholder_name',cardholder:'cardholder_name',
+    branchcode:'branch_code',branch:'branch_code',branchcodestaff:'branch_code',
+    deliveryname:'delivery_name',dname:'delivery_name',
+    staffid:'staff_id',staff:'staff_id',
+    deliveryunit:'delivery_unit',unit:'delivery_unit',deliveryby:'delivery_unit',deliverybyunit:'delivery_unit',team:'delivery_unit',
+    deliverydate:'delivery_date',date:'delivery_date',
+    deliverycardstatus:'delivery_card_status',cardstatus:'delivery_card_status',status:'delivery_card_status',
+    remark:'remark',note:'remark',notes:'remark',comment:'remark',
+    reasonforreissue:'reason_for_reissue',reissuereason:'reason_for_reissue',reason:'reason_for_reissue',reissue:'reason_for_reissue'};
+  const norm=h=>String(h).toLowerCase().replace(/[^a-z0-9]/g,'');
+  const fmtDate=v=>{ if(v==null||v==='')return ''; if(v instanceof Date){const p=n=>String(n).padStart(2,'0');return v.getFullYear()+'-'+p(v.getMonth()+1)+'-'+p(v.getDate());} const s=String(v).trim(); const m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if(m){const p=n=>String(n).padStart(2,'0');return m[1]+'-'+p(m[2])+'-'+p(m[3]);} return s; };
+  $('s_file').onchange=function(){
+    const file=this.files&&this.files[0]; if(!file)return;
+    const r=new FileReader();
+    r.onload=e=>{ try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+      const raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:'',raw:true});
+      if(!raw.length){ popup('The file has no rows.'); return; }
+      parsed=raw.map(row=>{const o={};Object.keys(row).forEach(k=>{const f=MAP[norm(k)];if(!f)return;let val=row[k];if(f==='delivery_date'||val instanceof Date)val=fmtDate(val);else val=typeof val==='string'?val.trim():String(val).trim();o[f]=val;});return o;}).filter(o=>o.cardholder_name);
+      if(!parsed.length){ popup('No valid rows found. The file needs a cardholder_name column.'); return; }
+      $('sPrev').innerHTML='<div class="card" style="margin-top:10px">'+kv('Rows found',parsed.length)+kv('Sample',parsed.slice(0,3).map(p=>p.cardholder_name).join(', '))+'</div>';
+      $('sUpBtn').disabled=false; $('sUpResult').innerHTML='';
+    }catch(err){ popup('Could not read the file: '+err.message); } };
+    r.readAsArrayBuffer(file);
+  };
+  $('sUpBtn').onclick=async function(){
+    if(!parsed||!parsed.length)return; this.disabled=true; setMsg('sUpMsg','ok','Submitting '+parsed.length+' record(s)…');
+    const {data:cards,error:cErr}=await sb.from('merchant_card_detail').select('id,cardholder_name,create_date,reason_for_reissue');
+    if(cErr){ this.disabled=false; setMsg('sUpMsg','bad',cErr.message); return; }
+    const byName={}; (cards||[]).forEach(c=>{const k=String(c.cardholder_name).trim().toLowerCase();(byName[k]=byName[k]||[]).push(c);});
+    const reqd=['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'];
+    let ok=0; const fails=[];
+    for(let i=0;i<parsed.length;i++){ const p=parsed[i], rowno=i+2, name=String(p.cardholder_name).trim();
+      const cands=byName[name.toLowerCase()]||[]; let card=null;
+      if(cands.length===0){ fails.push([rowno,name,'Card holder not found in Card Data']); continue; }
+      if(cands.length===1){ card=cands[0]; }
+      else { const want=(p.reason_for_reissue&&String(p.reason_for_reissue).trim().toLowerCase())||'';
+        const match=cands.filter(c=>((c.reason_for_reissue&&String(c.reason_for_reissue).trim().toLowerCase())||'')===want);
+        if(match.length===1)card=match[0]; else { fails.push([rowno,name,cands.length+' cards for this name — add a reason_for_reissue column to pick one']); continue; } }
+      const miss=reqd.filter(k=>!p[k]); if(miss.length){ fails.push([rowno,name,'Missing: '+miss.join(', ')]); continue; }
+      if(!/^\d+$/.test(String(p.branch_code))){ fails.push([rowno,name,'Branch Code must be a number']); continue; }
+      if(!/^\d+$/.test(String(p.staff_id))){ fails.push([rowno,name,'Staff ID must be a number']); continue; }
+      if(card.create_date && p.delivery_date < card.create_date){ fails.push([rowno,name,'Delivery Date earlier than card create date ('+card.create_date+')']); continue; }
+      if(String(p.delivery_card_status).trim().toLowerCase()!=='delivered' && !(p.remark&&String(p.remark).trim())){ fails.push([rowno,name,'Remark required when status is not Delivered']); continue; }
+      const payload={card_ref:String(card.id),card_holder_name:card.cardholder_name,branch_code:String(p.branch_code),delivery_name:String(p.delivery_name),staff_id:String(p.staff_id),delivery_unit:String(p.delivery_unit),delivery_date:p.delivery_date,delivery_card_status:String(p.delivery_card_status),remark:(p.remark&&String(p.remark).trim())||null};
+      const {error}=await sb.from('submissions').insert(payload);
+      if(error){ fails.push([rowno,name,subErr(error.message)]); } else ok++;
+    }
+    this.disabled=false;
+    setMsg('sUpMsg', fails.length?'bad':'ok', ok+' submitted'+(fails.length?', '+fails.length+' failed':'')+'.');
+    $('sUpResult').innerHTML = fails.length? '<div style="overflow-x:auto;margin-top:10px"><table class="htable"><thead><tr><th>Row</th><th>Card holder</th><th>Not submitted — reason</th></tr></thead><tbody>'+fails.map(f=>'<tr><td>'+f[0]+'</td><td>'+escHtml(f[1])+'</td><td>'+escHtml(f[2])+'</td></tr>').join('')+'</tbody></table></div>' : '<div class="card" style="margin-top:10px;text-align:center">All records submitted. 🎉</div>';
+    if(ok){ $('s_file').value=''; parsed=null; $('sPrev').innerHTML=''; $('sUpBtn').disabled=true; }
+  };
+}
 async function viewHistory(){
   $('main').innerHTML='<h2>History</h2><div id="hist"><div class="empty">Loading…</div></div>';
   const {data,error}=await sb.from('submissions').select('*').order('created_at',{ascending:false});
