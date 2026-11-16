@@ -634,27 +634,27 @@ async function settingsUsers(){
 function settingsHolder(){
   const body=$('setBody');
   body.innerHTML='<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Upload daily card data</div><div id="upWrap"></div></div>'+
-    '<div style="margin:12px 0"><input id="chSearch" placeholder="Search card holder…" style="width:100%"></div>'+
-    '<div id="cBar"></div>'+
     '<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Add a card</div>'+
       '<label>Customer name (card holder) *</label><input id="ch_name">'+
       '<label>Address</label><input id="ch_addr">'+
       '<label>Creating in TWCMS (date)</label><input id="ch_date" type="date">'+
       '<label>Reason for reissue</label><input id="ch_reason" placeholder="Leave blank for a new card">'+
-      '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div><div id="chList"></div>';
+      '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div>'+
+    '<div style="margin:12px 0"><input id="chSearch" placeholder="Search card holder…" style="width:100%"></div>'+
+    '<div id="cBar"></div><div id="chList"></div>';
   const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
   const colHead=['Customer name','Type','Address','Create date','Reason','Delivered by','Unit','Delivery date','Card status','Actions'];
   let CARDS=[], LATEST={};
   function matchRows(){
     const term=$('chSearch').value.trim().toLowerCase();
-    const f=$('cFrom')?$('cFrom').value:'',t=$('cTo')?$('cTo').value:'',u=$('cUnit')?$('cUnit').value:'',st=$('cStatus')?$('cStatus').value:'';
+    const f=$('cFrom')?$('cFrom').value:'',t=$('cTo')?$('cTo').value:'',st=$('cStatus')?$('cStatus').value:'';
     return CARDS.filter(r=>{
       if(term && !String(r.cardholder_name).toLowerCase().includes(term))return false;
       const l=LATEST[String(r.id)];
-      if(f && (!l||!l.delivery_date||l.delivery_date<f))return false;
-      if(t && (!l||!l.delivery_date||l.delivery_date>t))return false;
-      if(u && (!l||String(l.delivery_unit||'')!==u))return false;
-      if(st && (!l||String(l.delivery_card_status||'')!==st))return false;
+      if(f && (!r.create_date||r.create_date<f))return false;
+      if(t && (!r.create_date||r.create_date>t))return false;
+      if(st==='__none'){ if(l)return false; }
+      else if(st && (!l||String(l.delivery_card_status||'')!==st))return false;
       return true;
     });
   }
@@ -672,11 +672,16 @@ function settingsHolder(){
       sb.from('submissions').select('card_ref,delivery_name,delivery_unit,delivery_date,delivery_card_status,created_at')
     ]);
     CARDS=cd.data||[]; LATEST=latestByRef(su.data);
-    const units=[...new Set((su.data||[]).map(s=>s.delivery_unit).filter(Boolean))].sort();
-    const statuses=[...new Set((su.data||[]).map(s=>s.delivery_card_status).filter(Boolean))].sort();
-    $('cBar').innerHTML=filterBar('c',units,statuses);
-    ['cFrom','cTo','cUnit','cStatus'].forEach(id=>{$(id).onchange=draw;$(id).oninput=draw;});
-    $('cClear').onclick=()=>{['cFrom','cTo','cUnit','cStatus'].forEach(id=>$(id).value='');draw();};
+    const statuses=[...new Set((OPTIONS.cardStatus||[]).concat((su.data||[]).map(s=>s.delivery_card_status).filter(Boolean)))].sort();
+    const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
+    $('cBar').innerHTML='<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
+      '<div style="display:flex;flex-direction:column">'+lab('From (create date)')+'<input type="date" id="cFrom" style="width:150px"></div>'+
+      '<div style="display:flex;flex-direction:column">'+lab('To (create date)')+'<input type="date" id="cTo" style="width:150px"></div>'+
+      '<div style="display:flex;flex-direction:column">'+lab('Card status')+'<select id="cStatus" style="width:170px"><option value="">All</option><option value="__none">Not yet submitted</option>'+statuses.map(x=>'<option>'+escHtml(x)+'</option>').join('')+'</select></div>'+
+      '<button class="btn-sm" id="cClear" style="background:var(--hint);padding:9px 14px">Clear</button>'+
+      '<button class="btn-sm" id="cExport" style="background:var(--accent);padding:9px 14px">Export Excel</button></div>';
+    ['cFrom','cTo','cStatus'].forEach(id=>{$(id).onchange=draw;$(id).oninput=draw;});
+    $('cClear').onclick=()=>{['cFrom','cTo','cStatus'].forEach(id=>$(id).value='');draw();};
     $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,r.create_date,r.reason_for_reissue,l.delivery_name,l.delivery_unit,l.delivery_date,l.delivery_card_status];});
       if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',colHead.slice(0,-1),rows);};
     draw();
