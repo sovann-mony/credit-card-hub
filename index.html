@@ -147,7 +147,7 @@
       <div class="nav" id="nav">
         <a data-view="submit"    data-roles="officer,admin"><span class="ic">📝</span><span class="lb">Submit</span></a>
         <a data-view="history"   data-roles="officer,admin"><span class="ic">🕑</span><span class="lb">History</span></a>
-        <a data-view="cards"     data-roles="admin"><span class="ic">💳</span><span class="lb">Card Data</span></a>
+        <a data-view="cards"     data-roles="officer,admin"><span class="ic">💳</span><span class="lb">Card Data</span></a>
         <a data-view="dashboard" data-roles="officer,admin"><span class="ic">📊</span><span class="lb">Dashboard</span></a>
         <a data-view="profile"   data-roles="officer,admin"><span class="ic">👤</span><span class="lb">Profile</span></a>
         <a data-view="settings"  data-roles="admin"><span class="ic">⚙️</span><span class="lb">Settings</span></a>
@@ -548,8 +548,14 @@ async function viewHistory(){
     const body=rows.map(s=>{const stc=s.status==='REJECTED'?'bad':'ok';
       return '<tr>'+td(new Date(s.created_at).toLocaleDateString())+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
         td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_date)+td(s.delivery_card_status)+td(s.remark)+
-        '<td><span class="pill '+stc+'">'+escHtml(s.status)+'</span></td></tr>';}).join('');
-    $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+        '<td><span class="pill '+stc+'">'+escHtml(s.status)+'</span></td>'+
+        '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-hedit="'+s.id+'">Edit</button>'+(isAdmin()?' <button class="btn-xs" style="background:var(--danger)" data-hdel="'+s.id+'">Remove</button>':'')+'</td></tr>';}).join('');
+    $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.concat(['Actions']).map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+    const byId=id=>ALL.find(x=>String(x.id)===String(id));
+    $('hist').querySelectorAll('[data-hedit]').forEach(b=>b.onclick=()=>editSubmission(byId(b.getAttribute('data-hedit'))));
+    $('hist').querySelectorAll('[data-hdel]').forEach(b=>b.onclick=async()=>{const s=byId(b.getAttribute('data-hdel'));
+      if(!confirm('Remove this delivery record for '+s.card_holder_name+'? This cannot be undone.'))return;
+      const {error}=await sb.from('submissions').delete().eq('id',s.id); if(error)return popup(error.message); viewHistory();});
   }
   ['hFrom','hTo','hUnit','hStatus'].forEach(id=>{$(id).onchange=render;$(id).oninput=render;});
   $('hClear').onclick=()=>{['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');render();};
@@ -662,7 +668,7 @@ function settingsHolder(){
     const rows=matchRows(); const esc=s=>(s==null||s===''?'—':escHtml(s));
     $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr>'+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
       rows.map(r=>{const l=LATEST[String(r.id)]||{}; const idx=CARDS.indexOf(r);
-        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(l.delivery_date)+'</td><td>'+esc(l.delivery_card_status)+'</td><td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button> <button class="btn-xs" style="background:var(--danger)" data-delc="'+r.id+'">Remove</button></td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards.</div>';
+        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(l.delivery_date)+'</td><td>'+esc(l.delivery_card_status)+'</td><td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button>'+(isAdmin()?' <button class="btn-xs" style="background:var(--danger)" data-delc="'+r.id+'">Remove</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards.</div>';
     $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return error.message;load();});});
     $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',b.getAttribute('data-delc'));if(error)popup(error.message);else load();});
   }
@@ -746,14 +752,18 @@ function viewProfile(){
   $('main').innerHTML='<h2>My profile</h2>'+
     '<div style="text-align:center;margin-bottom:10px">'+
       '<img id="p_avatar" src="'+ea(p.avatar_url||PH)+'" style="width:88px;height:88px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)">'+
-      '<div><label for="p_photo" style="color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;display:inline-block;margin-top:6px">Change photo</label><input id="p_photo" type="file" accept="image/*" style="display:none"></div>'+
+      '<div id="p_photoWrap" style="display:none"><label for="p_photo" style="color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;display:inline-block;margin-top:6px">Change photo</label><input id="p_photo" type="file" accept="image/*" style="display:none"></div>'+
     '</div>'+
     '<div class="card">'+kv('Role',p.role)+'</div>'+
     '<label>Full name</label><input id="p_name" value="'+ea(p.full_name)+'">'+
     '<label>Staff ID</label><input id="p_staff" value="'+ea(p.staff_id)+'">'+
     '<label>Contact number</label><input id="p_phone" value="'+ea(p.phone)+'">'+
     '<label>Email</label><input id="p_email" type="email" value="'+ea(p.email||ME.email)+'">'+
-    '<button class="primary" id="pSave">Save changes</button><div class="msg" id="pMsg"></div>';
+    '<button class="primary" id="pSave">Edit</button><div class="msg" id="pMsg"></div>';
+  let editing=false;
+  const setEdit=on=>{editing=on;['p_name','p_staff','p_phone','p_email'].forEach(id=>$(id).disabled=!on);
+    $('p_photoWrap').style.display=on?'':'none';$('pSave').textContent=on?'Save changes':'Edit';};
+  setEdit(false);
   $('p_photo').onchange=function(){
     const f=this.files&&this.files[0]; if(!f)return;
     const rd=new FileReader(); rd.onload=e=>{ const img=new Image(); img.onload=()=>{
@@ -764,6 +774,7 @@ function viewProfile(){
     }; img.src=e.target.result; }; rd.readAsDataURL(f);
   };
   $('pSave').onclick=async function(){
+    if(!editing){ setEdit(true); $('p_name').focus(); return; }
     this.disabled=true;
     const upd={full_name:$('p_name').value,staff_id:$('p_staff').value,phone:$('p_phone').value};
     if(newAvatar)upd.avatar_url=newAvatar;
@@ -777,12 +788,38 @@ function viewProfile(){
     }
     this.disabled=false;
     if(error){ setMsg('pMsg','bad',error.message); return; }
-    Object.assign(PROFILE,upd); setMsg('pMsg','ok','Profile updated.'+note);
+    Object.assign(PROFILE,upd); setMsg('pMsg','ok','Profile updated.'+note); setEdit(false);
     $('uname').textContent=PROFILE.full_name||ME.email; if(newAvatar)$('tbAvatar').src=newAvatar;
   };
 }
 
 /* ---------- helpers ---------- */
+function isAdmin(){ return !!(PROFILE&&PROFILE.role==='admin'); }
+/* edit one delivery record (History) — officers and admins */
+function editSubmission(s){
+  if(!s)return;
+  editModal('Edit delivery record — '+escHtml(s.card_holder_name),[
+    {key:'branch_code',label:'Branch Code (numbers only)',value:s.branch_code},
+    {key:'delivery_name',label:'Delivery name',value:s.delivery_name},
+    {key:'staff_id',label:'Staff ID (numbers only)',value:s.staff_id},
+    {key:'delivery_unit',label:'Unit',value:s.delivery_unit,options:OPTIONS.unit||[]},
+    {key:'delivery_date',label:'Delivery date',value:s.delivery_date,type:'date'},
+    {key:'delivery_card_status',label:'Card status',value:s.delivery_card_status,options:OPTIONS.cardStatus||[]},
+    {key:'remark',label:'Remark',value:s.remark}
+  ],async v=>{
+    for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'])
+      if(!v[k])return 'Please fill in all required information.';
+    if(!/^\d+$/.test(v.branch_code))return 'Branch Code must be a number.';
+    if(!/^\d+$/.test(v.staff_id))return 'Staff ID must be a number.';
+    if(v.delivery_card_status.toLowerCase()!=='delivered'&&!v.remark)return 'Remark is required when the status is not "Delivered".';
+    const {data:c}=await sb.from('merchant_card_detail').select('create_date').eq('id',s.card_ref).maybeSingle();
+    if(c&&c.create_date&&v.delivery_date<c.create_date)return "Delivery Date cannot be earlier than the card's create date ("+c.create_date+").";
+    v.remark=v.remark||null;
+    const {error}=await sb.from('submissions').update(v).eq('id',s.id);
+    if(error)return subErr(error.message);
+    viewHistory();
+  });
+}
 /* latest submission per card_ref (by created_at) */
 function latestByRef(subs){ const m={}; (subs||[]).forEach(s=>{const k=String(s.card_ref); if(!m[k]||new Date(s.created_at)>new Date(m[k].created_at))m[k]=s;}); return m; }
 /* shared filter bar: From/To (delivery date), Unit, Card status, Clear, Export */
@@ -829,7 +866,9 @@ function editModal(title,fields,onSave){
   o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2500;padding:16px';
   o.innerHTML='<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:18px;max-height:85vh;overflow:auto">'+
     '<div style="font-weight:700;font-size:16px;margin-bottom:4px">'+title+'</div>'+
-    fields.map((f,i)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+f.label+'</label><input id="em_'+i+'" type="'+(f.type||'text')+'" value="'+escHtml(f.value)+'"'+(f.readonly?' readonly style="background:#f3f4f6"':'')+'>').join('')+
+    fields.map((f,i)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+f.label+'</label>'+(f.options
+      ?'<select id="em_'+i+'">'+(()=>{const o=f.options.slice();if(f.value&&!o.includes(f.value))o.unshift(f.value);return '<option value="">Select…</option>'+o.map(x=>'<option'+(x===f.value?' selected':'')+'>'+escHtml(x)+'</option>').join('');})()+'</select>'
+      :'<input id="em_'+i+'" type="'+(f.type||'text')+'" value="'+escHtml(f.value)+'"'+(f.readonly?' readonly style="background:#f3f4f6"':'')+'>')).join('')+
     '<div style="display:flex;gap:8px;margin-top:16px"><button id="em_cancel" class="btn-sm" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button id="em_save" class="btn-sm" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
   document.body.appendChild(o);
   const close=()=>o.remove();
