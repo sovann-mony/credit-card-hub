@@ -181,7 +181,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_0VWIhVLqhvKZQ87a4icwmQ_bU5XhfRE";
 const OPTIONS = {               // <-- replace with your real lists
   branch:     ["100", "101", "102"],
   unit:       ["Team A", "Team B", "Team C"],
-  cardStatus: ["Delivered", "Not Delivered", "Returned", "Activated"]
+  cardStatus: ["Delivered", "Not Delivered", "Returned", "Activated", "On Hold"]
 };
 
 /* field labels (English + Khmer subtitle) */
@@ -398,6 +398,13 @@ function submitSingle(host){
         ({data}=await sb.from('merchant_card_detail')
           .select('id,cardholder_name,address,create_date,reason_for_reissue')
           .ilike('cardholder_name','%'+term+'%').limit(10));
+        // hide cards already submitted, unless their latest submission is "On Hold"
+        if(data&&data.length){
+          const ids=data.map(r=>String(r.id));
+          const {data:subs}=await sb.from('submissions').select('card_ref,delivery_card_status,created_at').in('card_ref',ids);
+          const L=latestByRef(subs);
+          data=data.filter(r=>{const l=L[String(r.id)];return !l||String(l.delivery_card_status||'').trim().toLowerCase()==='on hold';});
+        }
       }else{
         const res=await tgCall('search',{q:term});
         if(res.error){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">'+escHtml(res.error)+'</div>';return;}
@@ -432,9 +439,9 @@ function submitSingle(host){
       popup('Remark is required when the status is not "Delivered".'); return; }
     this.disabled=true;
     if(ME){
-      const {data:dups}=await sb.from('submissions').select('delivery_name,created_at,status').eq('card_ref',payload.card_ref).limit(1);
-      if(dups&&dups.length){ this.disabled=false; const d=dups[0];
-        popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+new Date(d.created_at).toLocaleDateString():'')+'.'); return; }
+      const {data:dups}=await sb.from('submissions').select('delivery_name,created_at,delivery_card_status').eq('card_ref',payload.card_ref).order('created_at',{ascending:false}).limit(1);
+      if(dups&&dups.length && String(dups[0].delivery_card_status||'').trim().toLowerCase()!=='on hold'){ this.disabled=false; const d=dups[0];
+        popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+new Date(d.created_at).toLocaleDateString():'')+'. Only "On Hold" cards can be submitted again.'); return; }
       const {error}=await sb.from('submissions').insert(payload);
       this.disabled=false;
       if(error){ popup(subErr(error.message)); }
@@ -486,6 +493,8 @@ function submitUploader(host){
     if(!parsed||!parsed.length)return; this.disabled=true; setMsg('sUpMsg','ok','Submitting '+parsed.length+' record(s)…');
     const {data:cards,error:cErr}=await sb.from('merchant_card_detail').select('id,cardholder_name,create_date,reason_for_reissue');
     if(cErr){ this.disabled=false; setMsg('sUpMsg','bad',cErr.message); return; }
+    const {data:allSubs}=await sb.from('submissions').select('card_ref,delivery_card_status,created_at');
+    const LATEST=latestByRef(allSubs);
     const byName={}; (cards||[]).forEach(c=>{const k=String(c.cardholder_name).trim().toLowerCase();(byName[k]=byName[k]||[]).push(c);});
     const reqd=['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'];
     let ok=0; const fails=[];
@@ -496,6 +505,8 @@ function submitUploader(host){
       else { const want=(p.reason_for_reissue&&String(p.reason_for_reissue).trim().toLowerCase())||'';
         const match=cands.filter(c=>((c.reason_for_reissue&&String(c.reason_for_reissue).trim().toLowerCase())||'')===want);
         if(match.length===1)card=match[0]; else { fails.push([rowno,name,cands.length+' cards for this name — add a reason_for_reissue column to pick one']); continue; } }
+      const lsub=LATEST[String(card.id)];
+      if(lsub && String(lsub.delivery_card_status||'').trim().toLowerCase()!=='on hold'){ fails.push([rowno,name,'Already submitted — only "On Hold" cards can be submitted again']); continue; }
       const miss=reqd.filter(k=>!p[k]); if(miss.length){ fails.push([rowno,name,'Missing: '+miss.join(', ')]); continue; }
       if(!/^\d+$/.test(String(p.branch_code))){ fails.push([rowno,name,'Branch Code must be a number']); continue; }
       if(!/^\d+$/.test(String(p.staff_id))){ fails.push([rowno,name,'Staff ID must be a number']); continue; }
@@ -512,19 +523,39 @@ function submitUploader(host){
   };
 }
 async function viewHistory(){
-  $('main').innerHTML='<h2>History</h2><div id="hist"><div class="empty">Loading…</div></div>';
+  $('main').innerHTML='<h2>History</h2><div id="histBar"></div><div id="hist"><div class="empty">Loading…</div></div>';
   const {data,error}=await sb.from('submissions').select('*').order('created_at',{ascending:false});
-  if(error){$('hist').innerHTML='<div class="empty">'+error.message+'</div>';return;}
-  if(!data||!data.length){$('hist').innerHTML='<div class="empty">No submissions yet.</div>';return;}
+  if(error){$('hist').innerHTML='<div class="empty">'+escHtml(error.message)+'</div>';return;}
+  const ALL=data||[];
+  const units=[...new Set(ALL.map(s=>s.delivery_unit).filter(Boolean))].sort();
+  const statuses=[...new Set(ALL.map(s=>s.delivery_card_status).filter(Boolean))].sort();
+  $('histBar').innerHTML=filterBar('h',units,statuses);
   const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Delivery date','Card status','Remark','Status'];
   const td=v=>'<td>'+(v==null||v===''?'—':escHtml(v))+'</td>';
-  const body=data.map(s=>{
-    const st=s.status==='REJECTED'?'bad':'ok';
-    return '<tr>'+td(new Date(s.created_at).toLocaleDateString())+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
-      td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_date)+td(s.delivery_card_status)+td(s.remark)+
-      '<td><span class="pill '+st+'">'+escHtml(s.status)+'</span></td></tr>';
-  }).join('');
-  $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  function current(){
+    const f=$('hFrom').value,t=$('hTo').value,u=$('hUnit').value,st=$('hStatus').value;
+    return ALL.filter(s=>{
+      if(f && (!s.delivery_date||s.delivery_date<f))return false;
+      if(t && (!s.delivery_date||s.delivery_date>t))return false;
+      if(u && String(s.delivery_unit||'')!==u)return false;
+      if(st && String(s.delivery_card_status||'')!==st)return false;
+      return true;
+    });
+  }
+  function render(){
+    const rows=current();
+    if(!rows.length){$('hist').innerHTML='<div class="empty">No submissions match.</div>';return;}
+    const body=rows.map(s=>{const stc=s.status==='REJECTED'?'bad':'ok';
+      return '<tr>'+td(new Date(s.created_at).toLocaleDateString())+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
+        td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_date)+td(s.delivery_card_status)+td(s.remark)+
+        '<td><span class="pill '+stc+'">'+escHtml(s.status)+'</span></td></tr>';}).join('');
+    $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  }
+  ['hFrom','hTo','hUnit','hStatus'].forEach(id=>{$(id).onchange=render;$(id).oninput=render;});
+  $('hClear').onclick=()=>{['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');render();};
+  $('hExport').onclick=()=>{const rows=current().map(s=>[new Date(s.created_at).toLocaleDateString(),s.card_holder_name,s.delivery_name,s.staff_id,s.branch_code,s.delivery_unit,s.delivery_date,s.delivery_card_status,s.remark,s.status]);
+    if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('history.xlsx',head,rows);};
+  render();
 }
 
 /* ---------- DASHBOARD ---------- */
@@ -604,6 +635,7 @@ function settingsHolder(){
   const body=$('setBody');
   body.innerHTML='<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Upload daily card data</div><div id="upWrap"></div></div>'+
     '<div style="margin:12px 0"><input id="chSearch" placeholder="Search card holder…" style="width:100%"></div>'+
+    '<div id="cBar"></div>'+
     '<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Add a card</div>'+
       '<label>Customer name (card holder) *</label><input id="ch_name">'+
       '<label>Address</label><input id="ch_addr">'+
@@ -611,24 +643,53 @@ function settingsHolder(){
       '<label>Reason for reissue</label><input id="ch_reason" placeholder="Leave blank for a new card">'+
       '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div><div id="chList"></div>';
   const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
-  async function load(term){
-    const {data}=await sb.from('merchant_card_detail').select('*').order('cardholder_name').limit(200);
-    let rows=data||[]; if(term)rows=rows.filter(r=>String(r.cardholder_name).toLowerCase().includes(term.toLowerCase()));
-    const esc=s=>(s==null||s===''?'—':escHtml(s));
-    $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Customer name</th><th>Type</th><th>Address</th><th>Create date</th><th>Reason</th><th>Actions</th></tr></thead><tbody>'+
-      rows.map((r,i)=>'<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+i+'">Edit</button> <button class="btn-xs" style="background:var(--danger)" data-delc="'+r.id+'">Remove</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No cards.</div>';
-    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=rows[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return error.message;load($('chSearch').value.trim());});});
-    $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',b.getAttribute('data-delc'));if(error)popup(error.message);else load($('chSearch').value.trim());});
+  const colHead=['Customer name','Type','Address','Create date','Reason','Delivered by','Unit','Delivery date','Card status','Actions'];
+  let CARDS=[], LATEST={};
+  function matchRows(){
+    const term=$('chSearch').value.trim().toLowerCase();
+    const f=$('cFrom')?$('cFrom').value:'',t=$('cTo')?$('cTo').value:'',u=$('cUnit')?$('cUnit').value:'',st=$('cStatus')?$('cStatus').value:'';
+    return CARDS.filter(r=>{
+      if(term && !String(r.cardholder_name).toLowerCase().includes(term))return false;
+      const l=LATEST[String(r.id)];
+      if(f && (!l||!l.delivery_date||l.delivery_date<f))return false;
+      if(t && (!l||!l.delivery_date||l.delivery_date>t))return false;
+      if(u && (!l||String(l.delivery_unit||'')!==u))return false;
+      if(st && (!l||String(l.delivery_card_status||'')!==st))return false;
+      return true;
+    });
   }
-  renderUploader($('upWrap'),()=>load($('chSearch').value.trim()));
+  function draw(){
+    const rows=matchRows(); const esc=s=>(s==null||s===''?'—':escHtml(s));
+    $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr>'+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
+      rows.map(r=>{const l=LATEST[String(r.id)]||{}; const idx=CARDS.indexOf(r);
+        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(l.delivery_date)+'</td><td>'+esc(l.delivery_card_status)+'</td><td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button> <button class="btn-xs" style="background:var(--danger)" data-delc="'+r.id+'">Remove</button></td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards.</div>';
+    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return error.message;load();});});
+    $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',b.getAttribute('data-delc'));if(error)popup(error.message);else load();});
+  }
+  async function load(){
+    const [cd,su]=await Promise.all([
+      sb.from('merchant_card_detail').select('*').order('cardholder_name').limit(1000),
+      sb.from('submissions').select('card_ref,delivery_name,delivery_unit,delivery_date,delivery_card_status,created_at')
+    ]);
+    CARDS=cd.data||[]; LATEST=latestByRef(su.data);
+    const units=[...new Set((su.data||[]).map(s=>s.delivery_unit).filter(Boolean))].sort();
+    const statuses=[...new Set((su.data||[]).map(s=>s.delivery_card_status).filter(Boolean))].sort();
+    $('cBar').innerHTML=filterBar('c',units,statuses);
+    ['cFrom','cTo','cUnit','cStatus'].forEach(id=>{$(id).onchange=draw;$(id).oninput=draw;});
+    $('cClear').onclick=()=>{['cFrom','cTo','cUnit','cStatus'].forEach(id=>$(id).value='');draw();};
+    $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,r.create_date,r.reason_for_reissue,l.delivery_name,l.delivery_unit,l.delivery_date,l.delivery_card_status];});
+      if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',colHead.slice(0,-1),rows);};
+    draw();
+  }
+  renderUploader($('upWrap'),()=>load());
   $('ch_save').onclick=async()=>{const name=$('ch_name').value.trim();
     if(!name)return popup('Customer name is required.');
     const row={cardholder_name:name,address:$('ch_addr').value.trim(),create_date:$('ch_date').value||null,reason_for_reissue:$('ch_reason').value.trim()||null};
     const {error}=await sb.from('merchant_card_detail').insert(row);
     if(error)popup(/duplicate|unique/i.test(error.message)?'This customer already has a new card — a new card can exist only once. For another card, add a Reason for reissue.':error.message);
-    else{['ch_name','ch_addr','ch_date','ch_reason'].forEach(i=>$(i).value='');load($('chSearch').value.trim());}};
-  $('chSearch').oninput=()=>load($('chSearch').value.trim());
-  load('');
+    else{['ch_name','ch_addr','ch_date','ch_reason'].forEach(i=>$(i).value='');load();}};
+  $('chSearch').oninput=draw;
+  load();
 }
 
 /* ---------- UPLOADER (reused inside Settings → Card Holder Name) ---------- */
@@ -717,7 +778,25 @@ function viewProfile(){
 }
 
 /* ---------- helpers ---------- */
+/* latest submission per card_ref (by created_at) */
+function latestByRef(subs){ const m={}; (subs||[]).forEach(s=>{const k=String(s.card_ref); if(!m[k]||new Date(s.created_at)>new Date(m[k].created_at))m[k]=s;}); return m; }
+/* shared filter bar: From/To (delivery date), Unit, Card status, Clear, Export */
+function filterBar(p,units,statuses){
+  const u=(units||[]).map(x=>'<option>'+escHtml(x)+'</option>').join('');
+  const s=(statuses||[]).map(x=>'<option>'+escHtml(x)+'</option>').join('');
+  return '<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
+    '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">From (delivery date)</label><input type="date" id="'+p+'From" style="width:150px"></div>'+
+    '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">To (delivery date)</label><input type="date" id="'+p+'To" style="width:150px"></div>'+
+    '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">Unit</label><select id="'+p+'Unit" style="width:150px"><option value="">All</option>'+u+'</select></div>'+
+    '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">Card status</label><select id="'+p+'Status" style="width:150px"><option value="">All</option>'+s+'</select></div>'+
+    '<button class="btn-sm" id="'+p+'Clear" style="background:var(--hint);padding:9px 14px">Clear</button>'+
+    '<button class="btn-sm" id="'+p+'Export" style="background:var(--accent);padding:9px 14px">Export Excel</button>'+
+  '</div>';
+}
+/* build and download an .xlsx from header row + array-of-arrays */
+function exportXlsx(filename,headers,rows){ const ws=XLSX.utils.aoa_to_sheet([headers].concat(rows)); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Data'); XLSX.writeFile(wb,filename); }
 function subErr(m){ m=String(m||'');
+  if(/\bDUP\b/.test(m)) return 'This card has already been submitted. Only "On Hold" cards can be submitted again.';
   if(/duplicate|unique/i.test(m)) return 'This card has already been submitted.';
   if(/NO_MATCH/.test(m))   return 'Card holder does not match the existing data.';
   if(/BAD_BRANCH/.test(m)) return 'Branch Code must be a number.';
