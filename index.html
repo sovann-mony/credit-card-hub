@@ -682,7 +682,7 @@ async function settingsUsers(){
     ['Card Data — edit a card',Y,Y],
     ['Card Data — remove a card',N,Y],
     ['Dashboard',Y,Y],
-    ['My Profile — view & edit own profile, change own password',Y,Y],
+    ['My Profile — view & edit own profile',Y,Y],
     ['Settings — Branch Code, Unit, Card Status lists',N,Y],
     ['Settings — add users, change role, reset password',N,Y],
     ['Settings — activate / deactivate any user',N,Y]
@@ -715,14 +715,14 @@ async function settingsUsers(){
     this.disabled=false;
     if(res.error) return popup(res.error);
     settingsUsers();
-    credBox('User created',res.full_name||name,res.staff_id,res.email||email,res.password,'Copy these sign-in details and send them to the new user. They can change the password in My profile → Change password.');
+    credBox('User created',res.full_name||name,res.staff_id,res.email||email,res.password,'Copy these sign-in details and send them to the new user. They will be asked to create their own password when they sign in.');
   };
   $('uBody').querySelectorAll('[data-role]').forEach(s=>s.onchange=async()=>{const {error}=await sb.from('profiles').update({role:s.value}).eq('id',s.getAttribute('data-role'));popup(error?error.message:'Role updated.');});
   $('uBody').querySelectorAll('[data-reset]').forEach(b=>b.onclick=()=>{const id=b.getAttribute('data-reset'),who=b.getAttribute('data-name');
     confirmBox('Reset the password for '+who+'? Their current password will stop working and a new one will be generated.','Reset password',async()=>{
       const res=await adminUsersCall({action:'reset',user_id:id});
       if(res.error) return popup(res.error);
-      credBox('Password reset',res.full_name||who,res.staff_id,res.email,res.password,'Copy the new sign-in details and send them to the user. They can change the password in My profile → Change password.');
+      credBox('Password reset',res.full_name||who,res.staff_id,res.email,res.password,'Copy the new sign-in details and send them to the user. They will be asked to create their own password when they sign in.');
     });});
   $('uBody').querySelectorAll('[data-toggle]').forEach(b=>b.onclick=()=>{
     const na=b.getAttribute('data-active')!=='1', self=b.getAttribute('data-self')==='1', who=b.getAttribute('data-name');
@@ -813,23 +813,30 @@ function settingsHolder(){
 /* ---------- UPLOADER (reused inside Settings → Card Holder Name) ---------- */
 function renderUploader(host,onDone){
   host.innerHTML=
-    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), address, create_date (creating in TWCMS), reason_for_reissue (blank = new).</p>'+
+    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), address, create_date (creating in TWCMS), reason_for_reissue (blank = new). <b>Duplicate new cards are rejected</b> — rows whose customer already has a new card, or appears twice as a new card in the file.</p>'+
     '<input type="file" id="f_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
     '<div id="upPrev"></div>'+
     '<button class="primary" id="upBtn" disabled>Upload &amp; merge</button>'+
-    '<div class="msg" id="upMsg"></div>';
+    '<div class="msg" id="upMsg"></div><div id="upResult"></div>';
   let parsed=null;
   const FIELDS=['cardholder_name','address','create_date','reason_for_reissue'];
   const MAP={cardholdername:'cardholder_name',customername:'cardholder_name',customer:'cardholder_name',name:'cardholder_name',cardholder:'cardholder_name',address:'address',location:'address',createdate:'create_date',creatingintwcms:'create_date',createdintwcms:'create_date',createddate:'create_date',twcms:'create_date',reasonforreissue:'reason_for_reissue',reissuereason:'reason_for_reissue',reason:'reason_for_reissue',reissue:'reason_for_reissue'};
   const norm=h=>String(h).toLowerCase().replace(/[^a-z0-9]/g,'');
+  const nameKey=v=>String(v==null?'':v).trim().replace(/\s+/g,' ').toLowerCase();   // same customer = same name ignoring case/extra spaces
+  const p2=n=>String(n).padStart(2,'0');
+  // Excel date cells arrive as Date objects (cellDates:true); text dates are accepted as YYYY-MM-DD
+  const fmtDate=v=>{ if(v==null||v==='')return ''; if(v instanceof Date&&!isNaN(v)) return v.getFullYear()+'-'+p2(v.getMonth()+1)+'-'+p2(v.getDate());
+    const t=String(v).trim(); const m=t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/); return m? m[1]+'-'+p2(m[2])+'-'+p2(m[3]) : t; };
   $('f_file').onchange=function(){
     const file=this.files&&this.files[0]; if(!file)return;
+    $('upResult').innerHTML=''; $('upMsg').className='msg';
     const r=new FileReader();
     r.onload=e=>{ try{
-      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
-      const raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+      const raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:'',raw:true});
       if(!raw.length){ popup('The file has no rows.'); return; }
-      parsed=raw.map(row=>{const o={};Object.keys(row).forEach(k=>{const n=norm(k);const f=MAP[n]||(FIELDS.indexOf(n)>=0?n:null);if(f)o[f]=typeof row[k]==='string'?row[k].trim():row[k];});return o;}).filter(o=>o.cardholder_name);
+      parsed=raw.map((row,i)=>{const o={_row:i+2};Object.keys(row).forEach(k=>{const n=norm(k);const f=MAP[n]||(FIELDS.indexOf(n)>=0?n:null);if(!f)return;let v=row[k];
+        if(f==='create_date') v=fmtDate(v); else v=(v instanceof Date)?fmtDate(v):String(v).trim(); o[f]=v;});return o;}).filter(o=>o.cardholder_name);
       if(!parsed.length){ popup('No valid rows found. The file needs a cardholder_name (customer name) column.'); return; }
       $('upPrev').innerHTML='<div class="card" style="margin-top:10px">'+kv('Rows found',parsed.length)+kv('Sample',parsed.slice(0,3).map(p=>p.cardholder_name+(p.reason_for_reissue?' (reissue)':' (new)')).join(', '))+'</div>';
       $('upBtn').disabled=false;
@@ -837,17 +844,46 @@ function renderUploader(host,onDone){
     r.readAsArrayBuffer(file);
   };
   $('upBtn').onclick=async function(){
-    if(!parsed||!parsed.length)return; this.disabled=true; setMsg('upMsg','ok','Uploading…');
-    const {data:existing}=await sb.from('merchant_card_detail').select('cardholder_name,reason_for_reissue');
-    const newNames=new Set((existing||[]).filter(r=>!(r.reason_for_reissue&&String(r.reason_for_reissue).trim())).map(r=>String(r.cardholder_name).trim().toLowerCase()));
-    let toInsert=[],skipped=0;
-    parsed.forEach(p=>{const reason=(p.reason_for_reissue&&String(p.reason_for_reissue).trim())||null;const isNew=!reason;const key=String(p.cardholder_name).trim().toLowerCase();
-      if(isNew&&newNames.has(key)){skipped++;return;} if(isNew)newNames.add(key);
-      toInsert.push({cardholder_name:p.cardholder_name,address:p.address||null,create_date:p.create_date||null,reason_for_reissue:reason});});
-    let error=null; if(toInsert.length){ const res=await sb.from('merchant_card_detail').insert(toInsert); error=res.error; }
+    if(!parsed||!parsed.length)return; this.disabled=true; setMsg('upMsg','ok','Checking for duplicates…'); $('upResult').innerHTML='';
+    // all existing NEW cards (paged, so lists over 1,000 cards are fully checked)
+    const existingNew=new Map();
+    for(let from=0;;from+=1000){
+      const {data,error}=await sb.from('merchant_card_detail').select('cardholder_name,reason_for_reissue').order('id').range(from,from+999);
+      if(error){ this.disabled=false; setMsg('upMsg','bad',error.message); return; }
+      (data||[]).forEach(r=>{ if(!(r.reason_for_reissue&&String(r.reason_for_reissue).trim())) existingNew.set(nameKey(r.cardholder_name),r.cardholder_name); });
+      if(!data||data.length<1000) break;
+    }
+    const seenInFile=new Map(), toInsert=[], rejects=[];
+    parsed.forEach(p=>{
+      const reason=(p.reason_for_reissue&&String(p.reason_for_reissue).trim())||null, key=nameKey(p.cardholder_name), name=String(p.cardholder_name).trim().replace(/\s+/g,' ');
+      if(p.create_date && !/^\d{4}-\d{2}-\d{2}$/.test(p.create_date)){ rejects.push([p._row,name,'Create date "'+p.create_date+'" is not a valid date (use YYYY-MM-DD)']); return; }
+      if(!reason){
+        if(existingNew.has(key)){ rejects.push([p._row,name,'Duplicate — this customer already has a new card in Card Data']); return; }
+        if(seenInFile.has(key)){ rejects.push([p._row,name,'Duplicate — same new card as row '+seenInFile.get(key)+' in this file']); return; }
+        seenInFile.set(key,p._row);
+      }
+      toInsert.push({_row:p._row,cardholder_name:name,address:p.address||null,create_date:p.create_date||null,reason_for_reissue:reason});
+    });
+    let added=0;
+    for(let i=0;i<toInsert.length;i+=500){
+      const chunk=toInsert.slice(i,i+500), rows=chunk.map(({_row,...r})=>r);
+      setMsg('upMsg','ok','Uploading… '+added+' / '+toInsert.length);
+      const {error}=await sb.from('merchant_card_detail').insert(rows);
+      if(!error){ added+=chunk.length; continue; }
+      // a chunk failed (e.g. someone added the same customer meanwhile) — retry row by row so only the bad rows are rejected
+      for(const r of chunk){ const {_row,...row}=r; const {error:e1}=await sb.from('merchant_card_detail').insert(row);
+        if(e1) rejects.push([_row,row.cardholder_name,/duplicate|unique/i.test(e1.message)?'Duplicate — this customer already has a new card in Card Data':e1.message]); else added++; }
+    }
     this.disabled=false;
-    if(error){ setMsg('upMsg','bad',error.message); popup('Upload failed: '+error.message); }
-    else { setMsg('upMsg','ok',toInsert.length+' added'+(skipped?', '+skipped+' skipped (new card already exists)':'')+'.'); $('f_file').value=''; $('upPrev').innerHTML=''; if(onDone)onDone(); }
+    rejects.sort((x,y)=>x[0]-y[0]);
+    setMsg('upMsg',rejects.length?'bad':'ok',added+' card'+(added===1?'':'s')+' added'+(rejects.length?', '+rejects.length+' rejected':'')+'.');
+    $('upResult').innerHTML=rejects.length
+      ? '<div style="overflow-x:auto;margin-top:10px"><table class="htable"><thead><tr><th>Row</th><th>Customer name</th><th>Rejected — reason</th></tr></thead><tbody>'+
+        rejects.map(f=>'<tr><td>'+f[0]+'</td><td>'+escHtml(f[1])+'</td><td style="color:var(--danger)">'+escHtml(f[2])+'</td></tr>').join('')+'</tbody></table></div>'
+      : '';
+    if(rejects.length) popup(rejects.length+' row'+(rejects.length===1?' was':'s were')+' rejected (see the list under the upload button). '+added+' card'+(added===1?' was':'s were')+' added.');
+    $('f_file').value=''; parsed=null; $('upPrev').innerHTML=''; $('upBtn').disabled=true;
+    if(added&&onDone)onDone();
   };
 }
 
@@ -860,13 +896,12 @@ function viewProfile(){
       '<div class="pf-head"><img src="'+ea(p.avatar_url||AV_PH)+'" alt="">'+
         '<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:16px">'+ea(p.full_name||'—')+'</div>'+
         '<div class="hint" style="text-transform:capitalize">'+ea(p.role||'')+'</div></div>'+
-        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn-sm" id="pPass" style="background:#6b7280;padding:9px 14px">🔒 Change password</button><button class="btn-sm" id="pEdit" style="background:var(--accent);padding:9px 18px">✏️ Edit</button></div></div>'+
+        '<button class="btn-sm" id="pEdit" style="background:var(--accent);padding:9px 18px">✏️ Edit</button></div>'+
       kv('Full name',p.full_name)+kv('Staff ID',p.staff_id)+kv('Contact number',p.phone)+kv('Email',em)+
       '<div class="hint" style="margin-top:8px">📧 Your email is required — the password reset code is sent to this address.</div>'+
       (em?'':'<div class="msg show bad" style="margin-top:10px">No email on file. Click Edit and add your email so you can reset your password.</div>')+
     '</div>';
   $('pEdit').onclick=profileModal;
-  $('pPass').onclick=passwordModal;
 }
 
 /* Mark "must change password" as done for the signed-in user */
@@ -908,43 +943,6 @@ function forcePasswordModal(){
     o.remove(); popup('Your new password is saved. Use it next time you sign in.');
   };
   setTimeout(()=>q('#fp_new').focus(),50);
-}
-/* Change my own password: current password + new password (at least 6 characters) */
-function passwordModal(){
-  const L=t=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+t+' <span class="req">*</span></label>';
-  const o=document.createElement('div');
-  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2500;padding:16px';
-  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:400px;width:100%;padding:18px">'+
-    '<div style="font-weight:700;font-size:16px;margin-bottom:4px">🔒 Change password</div>'+
-    L('Current password')+'<input id="cp_old" type="password" autocomplete="current-password">'+
-    L('New password')+'<input id="cp_new" type="password" autocomplete="new-password" placeholder="At least 6 characters">'+
-    L('Confirm new password')+'<input id="cp_new2" type="password" autocomplete="new-password">'+
-    '<label style="display:flex;align-items:center;gap:6px;font-weight:400;margin-top:8px"><input type="checkbox" id="cp_show" style="width:auto"> Show passwords</label>'+
-    '<div class="msg" id="cp_msg"></div>'+
-    '<div style="display:flex;gap:8px;margin-top:14px"><button class="btn-sm" id="cp_cancel" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button class="btn-sm" id="cp_save" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
-  document.body.appendChild(o);
-  const q=x=>o.querySelector(x), close=()=>o.remove();
-  const bad=t=>{const m=q('#cp_msg');m.className='msg show bad';m.textContent=t;};
-  q('#cp_cancel').onclick=close; o.addEventListener('click',e=>{if(e.target===o)close();});
-  q('#cp_show').onchange=function(){['#cp_old','#cp_new','#cp_new2'].forEach(s=>q(s).type=this.checked?'text':'password');};
-  ['#cp_old','#cp_new','#cp_new2'].forEach(s=>q(s).addEventListener('keydown',e=>{if(e.key==='Enter')q('#cp_save').click();}));
-  q('#cp_save').onclick=async function(){
-    const oldp=q('#cp_old').value, np=q('#cp_new').value, np2=q('#cp_new2').value;
-    if(!oldp) return bad('Enter your current password.');
-    if(np.length<6) return bad('New password must be at least 6 characters.');
-    if(np!==np2) return bad('The new passwords do not match.');
-    if(np===oldp) return bad('The new password must be different from the current one.');
-    this.disabled=true;
-    const email=(PROFILE&&PROFILE.email)||(ME&&ME.email);
-    const {error:ve}=await sb.auth.signInWithPassword({email,password:oldp});   // confirm it's really you
-    if(ve){ this.disabled=false; return bad('Current password is incorrect.'); }
-    const {error}=await sb.auth.updateUser({password:np});
-    this.disabled=false;
-    if(error) return bad(error.message);
-    await clearMustChange();
-    close(); popup('Password changed. Use the new password next time you sign in.');
-  };
-  setTimeout(()=>q('#cp_old').focus(),50);
 }
 
 /* Edit-profile pop-up: change details, then Save or Cancel */
@@ -1202,7 +1200,7 @@ function makeMockClient(){
     const st={table,op:'select',filters:[],ilikes:[],limitN:null,single:false,payload:null};
     const api={select(){return api;},insert(p){st.op='insert';st.payload=p;return api;},upsert(p){st.op='upsert';st.payload=p;return api;},
       update(p){st.op='update';st.payload=p;return api;},delete(){st.op='delete';return api;},eq(c,v){st.filters.push([c,v]);return api;},
-      ilike(c,v){st.ilikes.push([c,v]);return api;},order(){return api;},limit(n){st.limitN=n;return api;},
+      ilike(c,v){st.ilikes.push([c,v]);return api;},order(){return api;},range(){return api;},limit(n){st.limitN=n;return api;},
       single(){st.single=true;return api;},then(res){res(run(st));}};
     return api;
   }
