@@ -53,6 +53,10 @@
   .pf-head{display:flex;align-items:center;gap:16px;margin-bottom:14px}
   .pf-head img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)}
   .perm td.y{color:var(--ok);font-weight:700}.perm td.n{color:var(--danger);font-weight:700}
+  /* date boxes shown as DD-MMM-YYYY */
+  .dmy{position:relative}
+  .dmy .dmy-show{cursor:pointer;padding-right:34px;background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'><rect x='3' y='4' width='18' height='18' rx='2'/><path d='M16 2v4M8 2v4M3 10h18'/></svg>") no-repeat right 10px center}
+  .dmy .dmy-real{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;margin:0;padding:0;border:0}
   /* controls */
   h2{font-size:17px;margin:0 0 14px}
   label{display:block;font-size:12.5px;color:#374151;font-weight:600;margin:13px 0 5px}
@@ -410,7 +414,7 @@ function submitSingle(host){
     selectedCard=r; $('f_holder').value=r.cardholder_name; $('hResults').innerHTML='';
     if($('f_date')) $('f_date').min = r.create_date || '';   // delivery date can't precede the card's create date
     $('lookup').innerHTML='<span class="pill ok">Selected</span> '+tag(r)+'<div class="card" style="margin-top:8px">'+
-      kv('Card holder',r.cardholder_name)+kv('Address',r.address)+kv('Created in TWCMS',r.create_date)+kv('Reason for reissue',r.reason_for_reissue||'— (new card)')+'</div>';
+      kv('Card holder',r.cardholder_name)+kv('Address',r.address)+kv('Created in TWCMS',fmtD(r.create_date))+kv('Reason for reissue',r.reason_for_reissue||'— (new card)')+'</div>';
   }
   $('f_holder').addEventListener('input',function(){
     const term=this.value.trim(); selectedCard=null; $('lookup').innerHTML=''; clearTimeout(t);
@@ -436,7 +440,7 @@ function submitSingle(host){
       if(!data||!data.length){$('hResults').innerHTML='<div class="hint" style="padding:6px 2px">No match in uploaded data.</div>';return;}
       $('hResults').innerHTML='<div class="card" style="padding:4px">'+data.map((r,i)=>
         '<div class="hopt" data-i="'+i+'" style="padding:9px;border-radius:7px;cursor:pointer">'+escHtml(r.cardholder_name)+' '+tag(r)+
-        ' <span class="hint">· '+escHtml(r.create_date||'')+(r.reason_for_reissue?' · '+escHtml(r.reason_for_reissue):'')+'</span></div>').join('')+'</div>';
+        ' <span class="hint">· '+escHtml(fmtD(r.create_date))+(r.reason_for_reissue?' · '+escHtml(r.reason_for_reissue):'')+'</span></div>').join('')+'</div>';
       $('hResults').querySelectorAll('.hopt').forEach(el=>el.onclick=()=>pick(data[+el.getAttribute('data-i')]));
     },300);
   });
@@ -457,14 +461,14 @@ function submitSingle(host){
     if(!/^\d+$/.test(payload.branch_code)){ popup('Branch Code must be a number.'); return; }
     if(!/^\d+$/.test(payload.staff_id)){ popup('Staff ID must be a number.'); return; }
     if(selectedCard.create_date && payload.delivery_date && payload.delivery_date < selectedCard.create_date){
-      popup('Delivery Date cannot be earlier than the card\'s create date ('+selectedCard.create_date+').'); return; }
+      popup('Delivery Date cannot be earlier than the card\'s create date ('+fmtD(selectedCard.create_date)+').'); return; }
     if(payload.delivery_card_status.trim().toLowerCase()!=='delivered' && !payload.remark){
       popup('Remark is required when the status is not "Delivered".'); return; }
     this.disabled=true;
     if(ME){
       const {data:dups}=await sb.from('submissions').select('delivery_name,created_at,delivery_card_status').eq('card_ref',payload.card_ref).order('created_at',{ascending:false}).limit(1);
       if(dups&&dups.length && String(dups[0].delivery_card_status||'').trim().toLowerCase()!=='on hold'){ this.disabled=false; const d=dups[0];
-        popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+new Date(d.created_at).toLocaleDateString():'')+'. Only "On Hold" cards can be submitted again.'); return; }
+        popup('This card was already submitted'+(d.delivery_name?' by '+d.delivery_name:'')+(d.created_at?' on '+fmtD(d.created_at):'')+'. Only "On Hold" cards can be submitted again.'); return; }
       const {error}=await sb.from('submissions').insert(payload);
       this.disabled=false;
       if(error){ popup(subErr(error.message)); }
@@ -481,7 +485,7 @@ function submitSingle(host){
 /* ---------- HISTORY ---------- */
 function submitUploader(host){
   host.innerHTML=
-    '<p class="hint">Upload a CSV or Excel file — each row becomes one delivery record. Required columns: <b>cardholder_name</b> (must match Card Data), <b>branch_code</b> (number), <b>delivery_name</b>, <b>staff_id</b> (number), <b>delivery_unit</b>, <b>delivery_date</b> (YYYY-MM-DD, not before the card create date), <b>delivery_card_status</b>. Optional: <b>remark</b> (required unless status is Delivered), <b>reason_for_reissue</b> (to pick a specific card when a name has more than one).</p>'+
+    '<p class="hint">Upload a CSV or Excel file — each row becomes one delivery record. Required columns: <b>cardholder_name</b> (must match Card Data), <b>branch_code</b> (number), <b>delivery_name</b>, <b>staff_id</b> (number), <b>delivery_unit</b>, <b>delivery_date</b> (DD-MMM-YYYY e.g. 17-Nov-2026, or an Excel date; not before the card create date), <b>delivery_card_status</b>. Optional: <b>remark</b> (required unless status is Delivered), <b>reason_for_reissue</b> (to pick a specific card when a name has more than one).</p>'+
     '<input type="file" id="s_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
     '<div id="sPrev"></div>'+
     '<button class="primary" id="sUpBtn" disabled>Validate &amp; submit</button>'+
@@ -497,7 +501,7 @@ function submitUploader(host){
     remark:'remark',note:'remark',notes:'remark',comment:'remark',
     reasonforreissue:'reason_for_reissue',reissuereason:'reason_for_reissue',reason:'reason_for_reissue',reissue:'reason_for_reissue'};
   const norm=h=>String(h).toLowerCase().replace(/[^a-z0-9]/g,'');
-  const fmtDate=v=>{ if(v==null||v==='')return ''; if(v instanceof Date){const p=n=>String(n).padStart(2,'0');return v.getFullYear()+'-'+p(v.getMonth()+1)+'-'+p(v.getDate());} const s=String(v).trim(); const m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if(m){const p=n=>String(n).padStart(2,'0');return m[1]+'-'+p(m[2])+'-'+p(m[3]);} return s; };
+  const fmtDate=toISO;
   $('s_file').onchange=function(){
     const file=this.files&&this.files[0]; if(!file)return;
     const r=new FileReader();
@@ -533,7 +537,8 @@ function submitUploader(host){
       const miss=reqd.filter(k=>!p[k]); if(miss.length){ fails.push([rowno,name,'Missing: '+miss.join(', ')]); continue; }
       if(!/^\d+$/.test(String(p.branch_code))){ fails.push([rowno,name,'Branch Code must be a number']); continue; }
       if(!/^\d+$/.test(String(p.staff_id))){ fails.push([rowno,name,'Staff ID must be a number']); continue; }
-      if(card.create_date && p.delivery_date < card.create_date){ fails.push([rowno,name,'Delivery Date earlier than card create date ('+card.create_date+')']); continue; }
+      if(!isISO(p.delivery_date)){ fails.push([rowno,name,'Delivery Date "'+p.delivery_date+'" is not a valid date (use DD-MMM-YYYY, e.g. 17-Nov-2026)']); continue; }
+      if(card.create_date && p.delivery_date < card.create_date){ fails.push([rowno,name,'Delivery Date earlier than card create date ('+fmtD(card.create_date)+')']); continue; }
       if(String(p.delivery_card_status).trim().toLowerCase()!=='delivered' && !(p.remark&&String(p.remark).trim())){ fails.push([rowno,name,'Remark required when status is not Delivered']); continue; }
       const payload={card_ref:String(card.id),card_holder_name:card.cardholder_name,branch_code:String(p.branch_code),delivery_name:String(p.delivery_name),staff_id:String(p.staff_id),delivery_unit:String(p.delivery_unit),delivery_date:p.delivery_date,delivery_card_status:String(p.delivery_card_status),remark:(p.remark&&String(p.remark).trim())||null};
       const {error}=await sb.from('submissions').insert(payload);
@@ -577,8 +582,8 @@ async function viewHistory(){
     if(!rows.length){$('hist').innerHTML='<div class="empty">No submissions match.</div>';return;}
     const admin=IS_ADMIN();
     const body=rows.map(s=>{const stc=s.status==='REJECTED'?'bad':'ok';
-      return '<tr>'+td(new Date(s.created_at).toLocaleDateString())+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
-        td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_date)+td(s.delivery_card_status)+td(s.remark)+
+      return '<tr>'+td(fmtD(s.created_at))+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
+        td(s.branch_code)+td(s.delivery_unit)+td(fmtD(s.delivery_date))+td(s.delivery_card_status)+td(s.remark)+
         '<td><span class="pill '+stc+'">'+escHtml(s.status)+'</span></td>'+
         '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-hedit="'+s.id+'">Edit</button>'+
         (admin?' <button class="btn-xs" style="background:var(--danger)" data-hdel="'+s.id+'">Remove</button>':'')+'</td></tr>';}).join('');
@@ -616,7 +621,7 @@ async function viewHistory(){
   $('hSearch').onclick=load;
   ['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
   $('hClear').onclick=()=>{['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');load();};
-  $('hExport').onclick=()=>{const rows=current().map(s=>[new Date(s.created_at).toLocaleDateString(),s.card_holder_name,s.delivery_name,s.staff_id,s.branch_code,s.delivery_unit,s.delivery_date,s.delivery_card_status,s.remark,s.status]);
+  $('hExport').onclick=()=>{const rows=current().map(s=>[fmtD(s.created_at),s.card_holder_name,s.delivery_name,s.staff_id,s.branch_code,s.delivery_unit,fmtD(s.delivery_date),s.delivery_card_status,s.remark,s.status]);
     if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('history.xlsx',head,rows);};
   load();
 }
@@ -775,7 +780,7 @@ function settingsHolder(){
     const rows=matchRows(); const esc=s=>(s==null||s===''?'—':escHtml(s));
     $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr>'+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
       rows.map(r=>{const l=LATEST[String(r.id)]||{}; const idx=CARDS.indexOf(r);
-        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(l.delivery_date)+'</td><td>'+esc(l.delivery_card_status)+'</td>'+
+        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(fmtD(r.create_date))+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(fmtD(l.delivery_date))+'</td><td>'+esc(l.delivery_card_status)+'</td>'+
           '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button>'+
           (admin?' <button class="btn-xs" style="background:var(--danger)" data-delc="'+idx+'">Remove</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards match.</div>';
     $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue,hint:'Leave blank for a new card.'}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';v.create_date=v.create_date||null;v.reason_for_reissue=v.reason_for_reissue||null;const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return /duplicate|unique/i.test(error.message)?'This customer already has a new card — add a Reason for reissue.':error.message;load();});});
@@ -798,7 +803,7 @@ function settingsHolder(){
   $('cSearch').onclick=load;
   ['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
   $('cClear').onclick=()=>{['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).value='');load();};
-  $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,r.create_date,r.reason_for_reissue,l.delivery_name,l.delivery_unit,l.delivery_date,l.delivery_card_status];});
+  $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,fmtD(r.create_date),r.reason_for_reissue,l.delivery_name,l.delivery_unit,fmtD(l.delivery_date),l.delivery_card_status];});
     if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',colHead.slice(0,-1),rows);};
   renderUploader($('upWrap'),()=>load());
   $('ch_save').onclick=async()=>{const name=$('ch_name').value.trim();
@@ -813,7 +818,7 @@ function settingsHolder(){
 /* ---------- UPLOADER (reused inside Settings → Card Holder Name) ---------- */
 function renderUploader(host,onDone){
   host.innerHTML=
-    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), address, create_date (creating in TWCMS), reason_for_reissue (blank = new). <b>Duplicate new cards are rejected</b> — rows whose customer already has a new card, or appears twice as a new card in the file.</p>'+
+    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), address, create_date (creating in TWCMS — DD-MMM-YYYY e.g. 17-Nov-2026, or an Excel date), reason_for_reissue (blank = new). <b>Duplicate new cards are rejected</b> — rows whose customer already has a new card, or appears twice as a new card in the file.</p>'+
     '<input type="file" id="f_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
     '<div id="upPrev"></div>'+
     '<button class="primary" id="upBtn" disabled>Upload &amp; merge</button>'+
@@ -824,9 +829,8 @@ function renderUploader(host,onDone){
   const norm=h=>String(h).toLowerCase().replace(/[^a-z0-9]/g,'');
   const nameKey=v=>String(v==null?'':v).trim().replace(/\s+/g,' ').toLowerCase();   // same customer = same name ignoring case/extra spaces
   const p2=n=>String(n).padStart(2,'0');
-  // Excel date cells arrive as Date objects (cellDates:true); text dates are accepted as YYYY-MM-DD
-  const fmtDate=v=>{ if(v==null||v==='')return ''; if(v instanceof Date&&!isNaN(v)) return v.getFullYear()+'-'+p2(v.getMonth()+1)+'-'+p2(v.getDate());
-    const t=String(v).trim(); const m=t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/); return m? m[1]+'-'+p2(m[2])+'-'+p2(m[3]) : t; };
+  // Excel date cells arrive as Date objects (cellDates:true); text dates may be DD-MMM-YYYY or YYYY-MM-DD
+  const fmtDate=toISO;
   $('f_file').onchange=function(){
     const file=this.files&&this.files[0]; if(!file)return;
     $('upResult').innerHTML=''; $('upMsg').className='msg';
@@ -856,7 +860,7 @@ function renderUploader(host,onDone){
     const seenInFile=new Map(), toInsert=[], rejects=[];
     parsed.forEach(p=>{
       const reason=(p.reason_for_reissue&&String(p.reason_for_reissue).trim())||null, key=nameKey(p.cardholder_name), name=String(p.cardholder_name).trim().replace(/\s+/g,' ');
-      if(p.create_date && !/^\d{4}-\d{2}-\d{2}$/.test(p.create_date)){ rejects.push([p._row,name,'Create date "'+p.create_date+'" is not a valid date (use YYYY-MM-DD)']); return; }
+      if(p.create_date && !isISO(p.create_date)){ rejects.push([p._row,name,'Create date "'+p.create_date+'" is not a valid date (use DD-MMM-YYYY, e.g. 17-Nov-2026)']); return; }
       if(!reason){
         if(existingNew.has(key)){ rejects.push([p._row,name,'Duplicate — this customer already has a new card in Card Data']); return; }
         if(seenInFile.has(key)){ rejects.push([p._row,name,'Duplicate — same new card as row '+seenInFile.get(key)+' in this file']); return; }
@@ -1001,6 +1005,49 @@ function profileModal(){
 }
 
 /* ---------- helpers ---------- */
+/* ===== Dates: shown everywhere as DD-MMM-YYYY (e.g. 17-Nov-2026); stored as YYYY-MM-DD ===== */
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const pad2=n=>String(n).padStart(2,'0');
+/* any date / timestamp -> "17-Nov-2026" */
+function fmtD(v){
+  if(v==null||v==='') return '';
+  const t=String(v).trim(), m=t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(m) return m[3]+'-'+MON[+m[2]-1]+'-'+m[1];               // plain date: no time-zone shift
+  const d=(v instanceof Date)?v:new Date(t);
+  return isNaN(d)?t:pad2(d.getDate())+'-'+MON[d.getMonth()]+'-'+d.getFullYear();
+}
+/* value from a file (Excel date, "17-Nov-2026", "2026-11-17") -> "2026-11-17"; anything else is returned unchanged */
+function toISO(v){
+  if(v==null||v==='') return '';
+  if(v instanceof Date&&!isNaN(v)) return v.getFullYear()+'-'+pad2(v.getMonth()+1)+'-'+pad2(v.getDate());
+  const t=String(v).trim();
+  let m=t.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+  if(m) return m[1]+'-'+pad2(m[2])+'-'+pad2(m[3]);
+  m=t.match(/^(\d{1,2})[-\/ .]([A-Za-z]{3})[A-Za-z]*[-\/ .,]+(\d{4})$/);
+  if(m){ const i=MON.findIndex(x=>x.toLowerCase()===m[2].toLowerCase()); if(i>=0) return m[3]+'-'+pad2(i+1)+'-'+pad2(m[1]); }
+  return t;
+}
+const isISO=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(new Date(v));
+/* Date boxes: keep the browser's calendar picker, but show the chosen date as DD-MMM-YYYY.
+   The real <input type=date> stays (same id/value), invisible on top of a read-only text box. */
+function enhanceDateInput(inp){
+  if(inp.dataset.dmy) return; inp.dataset.dmy='1';
+  const wrap=document.createElement('div'); wrap.className='dmy';
+  if(inp.style.width) wrap.style.width=inp.style.width;
+  if(inp.style.marginTop) wrap.style.marginTop=inp.style.marginTop;
+  const shown=document.createElement('input'); shown.type='text'; shown.readOnly=true; shown.tabIndex=-1; shown.placeholder='DD-MMM-YYYY'; shown.className='dmy-show';
+  inp.parentNode.insertBefore(wrap,inp); wrap.appendChild(shown); wrap.appendChild(inp);
+  inp.removeAttribute('style'); inp.classList.add('dmy-real');
+  const desc=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+  const sync=()=>{ shown.value=fmtD(desc.get.call(inp)); };
+  Object.defineProperty(inp,'value',{configurable:true,get(){return desc.get.call(this);},set(v){desc.set.call(this,v);sync();}});
+  inp.addEventListener('input',sync); inp.addEventListener('change',sync);
+  inp.addEventListener('click',()=>{ try{ inp.showPicker&&inp.showPicker(); }catch(e){} });
+  sync();
+}
+function enhanceDateInputs(root){ (root||document).querySelectorAll('input[type=date]:not([data-dmy])').forEach(enhanceDateInput); }
+new MutationObserver(()=>enhanceDateInputs()).observe(document.documentElement,{childList:true,subtree:true});
+
 /* Searchable dropdown: type a keyword to filter the list, arrow keys / Enter / Tab
    or click to pick. Free typing is still allowed (e.g. a branch not in the list). */
 function comboBox(input,list,getOptions){
@@ -1191,6 +1238,7 @@ function makeMockClient(){
         return {error:null};
       }
       st.filters.forEach(([c,v])=>rows=rows.filter(r=>String(r[c])===String(v)));
+      (st.ins||[]).forEach(([c,vs])=>rows=rows.filter(r=>vs.includes(String(r[c]))));
       st.ilikes.forEach(([c,v])=>{const term=String(v).replace(/%/g,'').toLowerCase();rows=rows.filter(r=>String(r[c]).toLowerCase().includes(term));});
       if(st.limitN)rows=rows.slice(0,st.limitN);
       return st.single?{data:rows[0]||null,error:null}:{data:rows,error:null};
@@ -1200,7 +1248,7 @@ function makeMockClient(){
     const st={table,op:'select',filters:[],ilikes:[],limitN:null,single:false,payload:null};
     const api={select(){return api;},insert(p){st.op='insert';st.payload=p;return api;},upsert(p){st.op='upsert';st.payload=p;return api;},
       update(p){st.op='update';st.payload=p;return api;},delete(){st.op='delete';return api;},eq(c,v){st.filters.push([c,v]);return api;},
-      ilike(c,v){st.ilikes.push([c,v]);return api;},order(){return api;},range(){return api;},limit(n){st.limitN=n;return api;},
+      ilike(c,v){st.ilikes.push([c,v]);return api;},order(){return api;},range(){return api;},in(c,v){st.ins=(st.ins||[]).concat([[c,(v||[]).map(String)]]);return api;},limit(n){st.limitN=n;return api;},
       single(){st.single=true;return api;},then(res){res(run(st));}};
     return api;
   }
