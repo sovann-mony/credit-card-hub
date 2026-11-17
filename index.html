@@ -40,7 +40,19 @@
   .uname{font-weight:700;font-size:13.5px;color:var(--text)}
   .urole{font-size:11px;color:var(--hint);text-transform:capitalize}
   .signout{color:var(--danger);cursor:pointer;font-weight:600;font-size:13px}
-  .main{flex:1;padding:28px 44px;max-width:1120px;width:100%;margin:0}
+  /* content stretches to the same right edge as the top bar (Sign out) */
+  .main{flex:1;padding:28px 24px 28px 44px;width:100%;margin:0}
+  /* searchable dropdown (Branch Code) */
+  .combo{position:relative}
+  .combo-list{display:none;position:absolute;left:0;right:0;top:100%;margin-top:4px;background:var(--bg);border:1px solid var(--line);border-radius:9px;box-shadow:0 6px 18px rgba(0,0,0,.12);max-height:240px;overflow:auto;z-index:40}
+  .combo-list.open{display:block}
+  .combo-opt{padding:9px 11px;cursor:pointer;font-size:14px}
+  .combo-opt:hover,.combo-opt.on{background:var(--card)}
+  .combo-empty{padding:9px 11px;color:var(--hint);font-size:12.5px}
+  /* profile view */
+  .pf-head{display:flex;align-items:center;gap:16px;margin-bottom:14px}
+  .pf-head img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)}
+  .perm td.y{color:var(--ok);font-weight:700}.perm td.n{color:var(--danger);font-weight:700}
   /* controls */
   h2{font-size:17px;margin:0 0 14px}
   label{display:block;font-size:12.5px;color:#374151;font-weight:600;margin:13px 0 5px}
@@ -167,7 +179,6 @@
       </div>
       <div class="main" id="main"></div>
     </div>
-  </div>
   </div>
 </div>
 
@@ -319,11 +330,17 @@ async function boot(){
   sb.auth.onAuthStateChange((_e,s)=>{ handleSession(s); });
   handleSession(session);
 }
+/* Supabase re-fires SIGNED_IN / TOKEN_REFRESHED when you come back to the tab.
+   Only rebuild the app when the signed-in user actually changes, so the current
+   page (and anything typed into it) is kept. */
+let CUR_UID=null;
 async function handleSession(session){
-  if(!session){ showPublic(); return; }
+  if(!session){ CUR_UID=null; showPublic(); return; }
+  if(CUR_UID===session.user.id){ ME=session.user; return; }
+  CUR_UID=session.user.id;
   ME=session.user;
   const { data } = await sb.from('profiles').select('*').eq('id',ME.id).single();
-  if(data && data.active===false){ await sb.auth.signOut(); popup('Your account has been deactivated. Please contact an administrator.'); showPublic(); return; }
+  if(data && data.active===false){ CUR_UID=null; await sb.auth.signOut(); popup('Your account has been deactivated. Please contact an administrator.'); showPublic(); return; }
   PROFILE = data || { role:'officer', full_name:ME.email };
   $('public').style.display='none'; $('auth').style.display='none'; $('app').style.display='block';
   $('uname').textContent = PROFILE.full_name||ME.email;
@@ -371,8 +388,7 @@ function submitSingle(host){
   let selectedCard=null, t=null;
   host.innerHTML =
     lbl(F.holder)+'<input id="f_holder" autocomplete="off" placeholder="Type to search card holder…"><div id="hResults"></div><div class="lookup" id="lookup"></div>'+
-    lbl(F.branch)+'<select id="f_branch"><option value="">Select…</option>'+opts(OPTIONS.branch)+'<option value="__other">Other…</option></select>'+
-      '<input id="f_branch_other" inputmode="numeric" placeholder="Enter branch code (numbers only)" style="display:none;margin-top:6px">'+
+    lbl(F.branch)+'<div class="combo"><input id="f_branch" inputmode="numeric" autocomplete="off" placeholder="Type to search branch code (or enter a new one)"><div class="combo-list" id="f_branch_list"></div></div>'+
     lbl(F.dname)+'<input id="f_dname">'+
     lbl(F.staff)+'<input id="f_staff" inputmode="numeric" placeholder="Numbers only">'+
     lbl(F.unit)+'<select id="f_unit"><option value="">Select…</option>'+opts(OPTIONS.unit)+'<option value="__other">Other…</option></select>'+
@@ -385,7 +401,7 @@ function submitSingle(host){
   const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
   function pick(r){
     selectedCard=r; $('f_holder').value=r.cardholder_name; $('hResults').innerHTML='';
-    if($('f_date')) $('f_date').min = r.create_date || '';
+    if($('f_date')) $('f_date').min = r.create_date || '';   // delivery date can't precede the card's create date
     $('lookup').innerHTML='<span class="pill ok">Selected</span> '+tag(r)+'<div class="card" style="margin-top:8px">'+
       kv('Card holder',r.cardholder_name)+kv('Address',r.address)+kv('Created in TWCMS',r.create_date)+kv('Reason for reissue',r.reason_for_reissue||'— (new card)')+'</div>';
   }
@@ -417,11 +433,11 @@ function submitSingle(host){
       $('hResults').querySelectorAll('.hopt').forEach(el=>el.onclick=()=>pick(data[+el.getAttribute('data-i')]));
     },300);
   });
-  $('f_branch').onchange=function(){$('f_branch_other').style.display=this.value==='__other'?'block':'none';};
+  comboBox($('f_branch'),$('f_branch_list'),()=>OPTIONS.branch);
   $('f_unit').onchange=function(){$('f_unit_other').style.display=this.value==='__other'?'block':'none';};
   $('subBtn').onclick=async function(){
     if(!selectedCard){ popup('Card holder name does not match the existing data. Please pick a valid card holder from the list.'); return; }
-    const branch=$('f_branch').value==='__other'?$('f_branch_other').value.trim():$('f_branch').value;
+    const branch=$('f_branch').value.trim();
     const unit=$('f_unit').value==='__other'?$('f_unit_other').value.trim():$('f_unit').value;
     const payload={
       card_ref:String(selectedCard.id), card_holder_name:selectedCard.cardholder_name,
@@ -524,14 +540,21 @@ function submitUploader(host){
 }
 async function viewHistory(){
   $('main').innerHTML='<h2>History</h2><div id="histBar"></div><div id="hist"><div class="empty">Loading…</div></div>';
-  const {data,error}=await sb.from('submissions').select('*').order('created_at',{ascending:false});
-  if(error){$('hist').innerHTML='<div class="empty">'+escHtml(error.message)+'</div>';return;}
-  const ALL=data||[];
-  const units=[...new Set(ALL.map(s=>s.delivery_unit).filter(Boolean))].sort();
-  const statuses=[...new Set(ALL.map(s=>s.delivery_card_status).filter(Boolean))].sort();
-  $('histBar').innerHTML=filterBar('h',units,statuses);
+  let ALL=[];
+  // Filter bar is built once; the lists combine the Settings options with values already used.
+  $('histBar').innerHTML=filterBar('h',[...new Set(OPTIONS.unit)].sort(),[...new Set(OPTIONS.cardStatus)].sort());
   const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Delivery date','Card status','Remark','Status'];
   const td=v=>'<td>'+(v==null||v===''?'—':escHtml(v))+'</td>';
+  function addMissing(selId,vals){ const sel=$(selId); const have=new Set([...sel.options].map(o=>o.value));
+    vals.filter(v=>v&&!have.has(v)).forEach(v=>{const o=document.createElement('option');o.textContent=v;sel.appendChild(o);}); }
+  async function load(){
+    $('hist').innerHTML='<div class="empty">Loading…</div>';
+    const {data,error}=await sb.from('submissions').select('*').order('created_at',{ascending:false});
+    if(error){$('hist').innerHTML='<div class="empty">'+escHtml(error.message)+'</div>';return;}
+    ALL=data||[];
+    addMissing('hUnit',ALL.map(s=>s.delivery_unit)); addMissing('hStatus',ALL.map(s=>s.delivery_card_status));
+    render();
+  }
   function current(){
     const f=$('hFrom').value,t=$('hTo').value,u=$('hUnit').value,st=$('hStatus').value;
     return ALL.filter(s=>{
@@ -545,23 +568,50 @@ async function viewHistory(){
   function render(){
     const rows=current();
     if(!rows.length){$('hist').innerHTML='<div class="empty">No submissions match.</div>';return;}
+    const admin=IS_ADMIN();
     const body=rows.map(s=>{const stc=s.status==='REJECTED'?'bad':'ok';
       return '<tr>'+td(new Date(s.created_at).toLocaleDateString())+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
         td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_date)+td(s.delivery_card_status)+td(s.remark)+
         '<td><span class="pill '+stc+'">'+escHtml(s.status)+'</span></td>'+
-        '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-hedit="'+s.id+'">Edit</button>'+(isAdmin()?' <button class="btn-xs" style="background:var(--danger)" data-hdel="'+s.id+'">Remove</button>':'')+'</td></tr>';}).join('');
+        '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-hedit="'+s.id+'">Edit</button>'+
+        (admin?' <button class="btn-xs" style="background:var(--danger)" data-hdel="'+s.id+'">Remove</button>':'')+'</td></tr>';}).join('');
     $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.concat(['Actions']).map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
-    const byId=id=>ALL.find(x=>String(x.id)===String(id));
-    $('hist').querySelectorAll('[data-hedit]').forEach(b=>b.onclick=()=>editSubmission(byId(b.getAttribute('data-hedit'))));
-    $('hist').querySelectorAll('[data-hdel]').forEach(b=>b.onclick=async()=>{const s=byId(b.getAttribute('data-hdel'));
-      if(!confirm('Remove this delivery record for '+s.card_holder_name+'? This cannot be undone.'))return;
-      const {error}=await sb.from('submissions').delete().eq('id',s.id); if(error)return popup(error.message); viewHistory();});
+    $('hist').querySelectorAll('[data-hedit]').forEach(b=>b.onclick=()=>{
+      const s=ALL.find(x=>String(x.id)===b.getAttribute('data-hedit')); if(!s)return;
+      editModal('Edit delivery record — '+(s.card_holder_name||''),[
+        {key:'branch_code',label:'Branch Code (numbers only)',value:s.branch_code},
+        {key:'delivery_name',label:'Delivery Name',value:s.delivery_name},
+        {key:'staff_id',label:'Staff ID (numbers only)',value:s.staff_id},
+        {key:'delivery_unit',label:'Delivery by (Unit)',value:s.delivery_unit,type:'select',options:OPTIONS.unit},
+        {key:'delivery_date',label:'Delivery Date',value:s.delivery_date,type:'date'},
+        {key:'delivery_card_status',label:'Credit Card Status',value:s.delivery_card_status,type:'select',options:OPTIONS.cardStatus},
+        {key:'remark',label:'Remark',value:s.remark,type:'textarea',hint:'Required when the status is not "Delivered".'}
+      ],async v=>{
+        for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status']) if(!v[k]) return 'Please fill in all required information.';
+        if(!/^\d+$/.test(v.branch_code)) return 'Branch Code must be a number.';
+        if(!/^\d+$/.test(v.staff_id)) return 'Staff ID must be a number.';
+        if(v.delivery_card_status.toLowerCase()!=='delivered' && !v.remark) return 'Remark is required when the status is not "Delivered".';
+        v.remark=v.remark||null;
+        const {error}=await sb.from('submissions').update(v).eq('id',s.id);
+        if(error) return subErr(error.message);
+        popup('Delivery record updated.'); load();
+      });
+    });
+    $('hist').querySelectorAll('[data-hdel]').forEach(b=>b.onclick=()=>{
+      const s=ALL.find(x=>String(x.id)===b.getAttribute('data-hdel')); if(!s)return;
+      confirmBox('Remove the delivery record for '+(s.card_holder_name||'this card')+'? This cannot be undone.','Remove',async()=>{
+        const {error}=await sb.from('submissions').delete().eq('id',s.id);
+        if(error) popup(error.message); else load();
+      });
+    });
   }
-  ['hFrom','hTo','hUnit','hStatus'].forEach(id=>{$(id).onchange=render;$(id).oninput=render;});
-  $('hClear').onclick=()=>{['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');render();};
+  // Conditions are applied when Search is clicked (Search also reloads the latest data).
+  $('hSearch').onclick=load;
+  ['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
+  $('hClear').onclick=()=>{['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');load();};
   $('hExport').onclick=()=>{const rows=current().map(s=>[new Date(s.created_at).toLocaleDateString(),s.card_holder_name,s.delivery_name,s.staff_id,s.branch_code,s.delivery_unit,s.delivery_date,s.delivery_card_status,s.remark,s.status]);
     if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('history.xlsx',head,rows);};
-  render();
+  load();
 }
 
 /* ---------- DASHBOARD ---------- */
@@ -608,7 +658,25 @@ async function settingsUsers(){
   const {data,error}=await sb.from('profiles').select('*').order('created_at',{ascending:false});
   if(error){body.innerHTML='<div class="empty">'+error.message+'</div>';return;}
   const esc=escHtml;
-  body.innerHTML='<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">Add user</div>'+
+  const Y='<td class="y">✔</td>', N='<td class="n">✖</td>';
+  const PERMS=[
+    ['Submit delivery record (single / upload file)',Y,Y],
+    ['History — view, filter, search, export',Y,Y],
+    ['History — edit a delivery record',Y,Y],
+    ['History — remove a delivery record',N,Y],
+    ['Card Data — view, add, upload, export',Y,Y],
+    ['Card Data — edit a card',Y,Y],
+    ['Card Data — remove a card',N,Y],
+    ['Dashboard',Y,Y],
+    ['My Profile — view & edit own profile',Y,Y],
+    ['Settings — Branch Code, Unit, Card Status lists',N,Y],
+    ['Settings — add users, change role, reset password',N,Y],
+    ['Settings — activate / deactivate any user',N,Y]
+  ];
+  const permHtml='<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">Role permissions</div>'+
+    '<div style="overflow-x:auto"><table class="htable perm"><thead><tr><th>Feature</th><th>Officer</th><th>Admin</th></tr></thead><tbody>'+
+    PERMS.map(p=>'<tr><td>'+p[0]+'</td>'+p[1]+p[2]+'</tr>').join('')+'</tbody></table></div></div>';
+  body.innerHTML=permHtml+'<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">Add user</div>'+
     '<input id="nu_name" placeholder="Full name"><input id="nu_staff" placeholder="Staff ID" style="margin-top:6px"><input id="nu_email" placeholder="Email" style="margin-top:6px">'+
     '<select id="nu_role" style="margin-top:6px"><option>officer</option><option>admin</option></select>'+
     '<button class="btn-sm" style="background:var(--accent);margin-top:8px;padding:9px 14px" id="nu_add">Add user</button></div>'+
@@ -618,7 +686,7 @@ async function settingsUsers(){
     '<td><select data-role="'+p.id+'">'+['officer','admin'].map(r=>'<option '+(r===p.role?'selected':'')+'>'+r+'</option>').join('')+'</select></td>'+
     '<td>'+(active?'<span class="pill ok">Active</span>':'<span class="pill bad">Inactive</span>')+'</td>'+
     '<td style="white-space:nowrap"><button class="btn-xs" style="background:#6b7280;margin-right:6px" data-reset="'+p.id+'" data-email="'+esc(p.email)+'">Reset password</button>'+
-      (self?'':'<button class="btn-xs" style="background:'+(active?'var(--danger)':'var(--ok)')+'" data-toggle="'+p.id+'" data-active="'+(active?'1':'0')+'">'+(active?'Deactivate':'Activate')+'</button>')+'</td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No users.</td></tr>';
+      '<button class="btn-xs" style="background:'+(active?'var(--danger)':'var(--ok)')+'" data-toggle="'+p.id+'" data-self="'+(self?'1':'0')+'" data-name="'+esc(p.full_name||p.email||'this user')+'" data-active="'+(active?'1':'0')+'">'+(active?'Deactivate':'Activate')+'</button></td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No users.</td></tr>';
   $('nu_add').onclick=async function(){const name=$('nu_name').value.trim(),email=$('nu_email').value.trim();
     if(!name||!email)return popup('Enter at least a name and email.');
     this.disabled=true;
@@ -635,10 +703,19 @@ async function settingsUsers(){
   };
   $('uBody').querySelectorAll('[data-role]').forEach(s=>s.onchange=async()=>{const {error}=await sb.from('profiles').update({role:s.value}).eq('id',s.getAttribute('data-role'));popup(error?error.message:'Role updated.');});
   $('uBody').querySelectorAll('[data-reset]').forEach(b=>b.onclick=async()=>{const em=b.getAttribute('data-email');if(!em)return popup('This user has no email on file.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin+location.pathname});popup(error?error.message:'Password reset link sent to '+em+'.');});
-  $('uBody').querySelectorAll('[data-toggle]').forEach(b=>b.onclick=async()=>{const na=b.getAttribute('data-active')!=='1';const {error}=await sb.from('profiles').update({active:na}).eq('id',b.getAttribute('data-toggle'));if(error)popup(error.message);else settingsUsers();});
+  $('uBody').querySelectorAll('[data-toggle]').forEach(b=>b.onclick=()=>{
+    const na=b.getAttribute('data-active')!=='1', self=b.getAttribute('data-self')==='1', who=b.getAttribute('data-name');
+    const doIt=async()=>{const {error}=await sb.from('profiles').update({active:na}).eq('id',b.getAttribute('data-toggle'));
+      if(error)return popup(error.message);
+      if(self&&!na){ CUR_UID=null; await sb.auth.signOut(); popup('Your account has been deactivated.'); return; }
+      settingsUsers();};
+    if(na) return doIt();   // activating needs no confirmation
+    confirmBox(self?'You are about to deactivate YOUR OWN account. You will be signed out and lose access until another admin activates you. Continue?'
+                   :'Deactivate '+who+'? They will lose access immediately.','Deactivate',doIt);
+  });
 }
 function settingsHolder(){
-  const body=$('setBody');
+  const body=$('setBody'), admin=IS_ADMIN();
   body.innerHTML='<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Upload daily card data</div><div id="upWrap"></div></div>'+
     '<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Add a card</div>'+
       '<label>Customer name (card holder) *</label><input id="ch_name">'+
@@ -646,14 +723,23 @@ function settingsHolder(){
       '<label>Creating in TWCMS (date)</label><input id="ch_date" type="date">'+
       '<label>Reason for reissue</label><input id="ch_reason" placeholder="Leave blank for a new card">'+
       '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div>'+
-    '<div style="margin:12px 0"><input id="chSearch" placeholder="Search card holder…" style="width:100%"></div>'+
     '<div id="cBar"></div><div id="chList"></div>';
   const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
   const colHead=['Customer name','Type','Address','Create date','Reason','Delivered by','Unit','Delivery date','Card status','Actions'];
   let CARDS=[], LATEST={};
+  // Filter bar is built once, so the selected conditions survive a Search/refresh.
+  const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
+  $('cBar').innerHTML='<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
+    '<div style="display:flex;flex-direction:column;flex:1;min-width:200px">'+lab('Card holder')+'<input id="chSearch" placeholder="Search card holder…"></div>'+
+    '<div style="display:flex;flex-direction:column">'+lab('From (create date)')+'<input type="date" id="cFrom" style="width:150px"></div>'+
+    '<div style="display:flex;flex-direction:column">'+lab('To (create date)')+'<input type="date" id="cTo" style="width:150px"></div>'+
+    '<div style="display:flex;flex-direction:column">'+lab('Card status')+'<select id="cStatus" style="width:170px"><option value="">All</option><option value="__none">Not yet submitted</option>'+[...new Set(OPTIONS.cardStatus||[])].sort().map(x=>'<option>'+escHtml(x)+'</option>').join('')+'</select></div>'+
+    '<button class="btn-sm" id="cClear" style="background:var(--hint);padding:9px 14px">Clear</button>'+
+    '<button class="btn-sm" id="cSearch" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
+    '<button class="btn-sm" id="cExport" style="background:var(--accent);padding:9px 14px">Export Excel</button></div>';
   function matchRows(){
     const term=$('chSearch').value.trim().toLowerCase();
-    const f=$('cFrom')?$('cFrom').value:'',t=$('cTo')?$('cTo').value:'',st=$('cStatus')?$('cStatus').value:'';
+    const f=$('cFrom').value,t=$('cTo').value,st=$('cStatus').value;
     return CARDS.filter(r=>{
       if(term && !String(r.cardholder_name).toLowerCase().includes(term))return false;
       const l=LATEST[String(r.id)];
@@ -668,30 +754,31 @@ function settingsHolder(){
     const rows=matchRows(); const esc=s=>(s==null||s===''?'—':escHtml(s));
     $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr>'+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
       rows.map(r=>{const l=LATEST[String(r.id)]||{}; const idx=CARDS.indexOf(r);
-        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(l.delivery_date)+'</td><td>'+esc(l.delivery_card_status)+'</td><td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button>'+(isAdmin()?' <button class="btn-xs" style="background:var(--danger)" data-delc="'+r.id+'">Remove</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards.</div>';
-    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return error.message;load();});});
-    $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',b.getAttribute('data-delc'));if(error)popup(error.message);else load();});
+        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(r.create_date)+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(l.delivery_date)+'</td><td>'+esc(l.delivery_card_status)+'</td>'+
+          '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button>'+
+          (admin?' <button class="btn-xs" style="background:var(--danger)" data-delc="'+idx+'">Remove</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards match.</div>';
+    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue,hint:'Leave blank for a new card.'}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';v.create_date=v.create_date||null;v.reason_for_reissue=v.reason_for_reissue||null;const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return /duplicate|unique/i.test(error.message)?'This customer already has a new card — add a Reason for reissue.':error.message;load();});});
+    $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-delc')];
+      confirmBox('Remove the card for '+r.cardholder_name+'? This cannot be undone.','Remove',async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',r.id);if(error)popup(error.message);else load();});});
   }
   async function load(){
+    $('chList').innerHTML='<div class="empty">Loading…</div>';
     const [cd,su]=await Promise.all([
       sb.from('merchant_card_detail').select('*').order('cardholder_name').limit(1000),
       sb.from('submissions').select('card_ref,delivery_name,delivery_unit,delivery_date,delivery_card_status,created_at')
     ]);
+    if(cd.error){$('chList').innerHTML='<div class="empty">'+escHtml(cd.error.message)+'</div>';return;}
     CARDS=cd.data||[]; LATEST=latestByRef(su.data);
-    const statuses=[...new Set((OPTIONS.cardStatus||[]).concat((su.data||[]).map(s=>s.delivery_card_status).filter(Boolean)))].sort();
-    const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
-    $('cBar').innerHTML='<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
-      '<div style="display:flex;flex-direction:column">'+lab('From (create date)')+'<input type="date" id="cFrom" style="width:150px"></div>'+
-      '<div style="display:flex;flex-direction:column">'+lab('To (create date)')+'<input type="date" id="cTo" style="width:150px"></div>'+
-      '<div style="display:flex;flex-direction:column">'+lab('Card status')+'<select id="cStatus" style="width:170px"><option value="">All</option><option value="__none">Not yet submitted</option>'+statuses.map(x=>'<option>'+escHtml(x)+'</option>').join('')+'</select></div>'+
-      '<button class="btn-sm" id="cClear" style="background:var(--hint);padding:9px 14px">Clear</button>'+
-      '<button class="btn-sm" id="cExport" style="background:var(--accent);padding:9px 14px">Export Excel</button></div>';
-    ['cFrom','cTo','cStatus'].forEach(id=>{$(id).onchange=draw;$(id).oninput=draw;});
-    $('cClear').onclick=()=>{['cFrom','cTo','cStatus'].forEach(id=>$(id).value='');draw();};
-    $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,r.create_date,r.reason_for_reissue,l.delivery_name,l.delivery_unit,l.delivery_date,l.delivery_card_status];});
-      if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',colHead.slice(0,-1),rows);};
+    const sel=$('cStatus'), have=new Set([...sel.options].map(o=>o.value));
+    (su.data||[]).map(s=>s.delivery_card_status).filter(x=>x&&!have.has(x)).forEach(x=>{have.add(x);const o=document.createElement('option');o.textContent=x;sel.appendChild(o);});
     draw();
   }
+  // Conditions are applied when Search is clicked (Search also reloads the latest data).
+  $('cSearch').onclick=load;
+  ['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
+  $('cClear').onclick=()=>{['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).value='');load();};
+  $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,r.create_date,r.reason_for_reissue,l.delivery_name,l.delivery_unit,l.delivery_date,l.delivery_card_status];});
+    if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',colHead.slice(0,-1),rows);};
   renderUploader($('upWrap'),()=>load());
   $('ch_save').onclick=async()=>{const name=$('ch_name').value.trim();
     if(!name)return popup('Customer name is required.');
@@ -699,7 +786,6 @@ function settingsHolder(){
     const {error}=await sb.from('merchant_card_detail').insert(row);
     if(error)popup(/duplicate|unique/i.test(error.message)?'This customer already has a new card — a new card can exist only once. For another card, add a Reason for reissue.':error.message);
     else{['ch_name','ch_addr','ch_date','ch_reason'].forEach(i=>$(i).value='');load();}};
-  $('chSearch').oninput=draw;
   load();
 }
 
@@ -747,79 +833,117 @@ function renderUploader(host,onDone){
 /* ---------- PROFILE ---------- */
 function viewProfile(){
   const p=PROFILE||{}, ea=escHtml;
-  const PH="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='88' height='88'><rect width='88' height='88' fill='%23e5e7eb'/><circle cx='44' cy='34' r='16' fill='%239aa3b2'/><rect x='20' y='54' width='48' height='34' rx='17' fill='%239aa3b2'/></svg>";
-  let newAvatar=null;
+  const em=p.email||(ME&&ME.email)||'';
   $('main').innerHTML='<h2>My profile</h2>'+
-    '<div style="text-align:center;margin-bottom:10px">'+
-      '<img id="p_avatar" src="'+ea(p.avatar_url||PH)+'" style="width:88px;height:88px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)">'+
-      '<div id="p_photoWrap" style="display:none"><label for="p_photo" style="color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;display:inline-block;margin-top:6px">Change photo</label><input id="p_photo" type="file" accept="image/*" style="display:none"></div>'+
-    '</div>'+
-    '<div class="card">'+kv('Role',p.role)+'</div>'+
-    '<label>Full name</label><input id="p_name" value="'+ea(p.full_name)+'">'+
-    '<label>Staff ID</label><input id="p_staff" value="'+ea(p.staff_id)+'">'+
-    '<label>Contact number</label><input id="p_phone" value="'+ea(p.phone)+'">'+
-    '<label>Email</label><input id="p_email" type="email" value="'+ea(p.email||ME.email)+'">'+
-    '<button class="primary" id="pSave">Edit</button><div class="msg" id="pMsg"></div>';
-  let editing=false;
-  const setEdit=on=>{editing=on;['p_name','p_staff','p_phone','p_email'].forEach(id=>$(id).disabled=!on);
-    $('p_photoWrap').style.display=on?'':'none';$('pSave').textContent=on?'Save changes':'Edit';};
-  setEdit(false);
-  $('p_photo').onchange=function(){
+    '<div class="card" style="padding:16px">'+
+      '<div class="pf-head"><img src="'+ea(p.avatar_url||AV_PH)+'" alt="">'+
+        '<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:16px">'+ea(p.full_name||'—')+'</div>'+
+        '<div class="hint" style="text-transform:capitalize">'+ea(p.role||'')+'</div></div>'+
+        '<button class="btn-sm" id="pEdit" style="background:var(--accent);padding:9px 18px">✏️ Edit</button></div>'+
+      kv('Full name',p.full_name)+kv('Staff ID',p.staff_id)+kv('Contact number',p.phone)+kv('Email',em)+
+      '<div class="hint" style="margin-top:8px">📧 Your email is required — the password reset code is sent to this address.</div>'+
+      (em?'':'<div class="msg show bad" style="margin-top:10px">No email on file. Click Edit and add your email so you can reset your password.</div>')+
+    '</div>';
+  $('pEdit').onclick=profileModal;
+}
+
+/* Edit-profile pop-up: change details, then Save or Cancel */
+function profileModal(){
+  const p=PROFILE||{}, ea=escHtml, curEmail=p.email||(ME&&ME.email)||'';
+  let newAvatar=null;
+  const L=(t,req)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+t+(req?' <span class="req">*</span>':'')+'</label>';
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2500;padding:16px';
+  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:440px;width:100%;padding:18px;max-height:90vh;overflow:auto">'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:8px">Edit profile</div>'+
+    '<div style="text-align:center"><img id="pm_avatar" src="'+ea(p.avatar_url||AV_PH)+'" style="width:84px;height:84px;border-radius:50%;object-fit:cover;border:1px solid #e5e7eb">'+
+      '<div><label for="pm_photo" style="color:var(--accent);font-weight:600;font-size:13px;cursor:pointer;display:inline-block;margin:6px 0 0">Change photo</label><input id="pm_photo" type="file" accept="image/*" style="display:none"></div></div>'+
+    L('Full name',true)+'<input id="pm_name" value="'+ea(p.full_name)+'">'+
+    L('Staff ID')+'<input id="pm_staff" value="'+ea(p.staff_id)+'">'+
+    L('Contact number')+'<input id="pm_phone" value="'+ea(p.phone)+'">'+
+    L('Email',true)+'<input id="pm_email" type="email" value="'+ea(curEmail)+'">'+
+    '<div class="hint" style="color:#b45309">Required — the password reset code is sent to this email. If you change it, confirm the change from your inbox.</div>'+
+    '<div class="msg" id="pm_msg"></div>'+
+    '<div style="display:flex;gap:8px;margin-top:16px"><button class="btn-sm" id="pm_cancel" style="flex:1;background:#6b7280;padding:10px">Cancel</button>'+
+    '<button class="btn-sm" id="pm_save" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
+  document.body.appendChild(o);
+  const q=s=>o.querySelector(s), close=()=>o.remove();
+  q('#pm_cancel').onclick=close;
+  o.addEventListener('click',e=>{if(e.target===o)close();});
+  q('#pm_photo').onchange=function(){
     const f=this.files&&this.files[0]; if(!f)return;
     const rd=new FileReader(); rd.onload=e=>{ const img=new Image(); img.onload=()=>{
       const sz=220, sc=Math.min(sz/img.width,sz/img.height,1), c=document.createElement('canvas');
       c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
       c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-      newAvatar=c.toDataURL('image/jpeg',0.82); $('p_avatar').src=newAvatar;
+      newAvatar=c.toDataURL('image/jpeg',0.82); q('#pm_avatar').src=newAvatar;
     }; img.src=e.target.result; }; rd.readAsDataURL(f);
   };
-  $('pSave').onclick=async function(){
-    if(!editing){ setEdit(true); $('p_name').focus(); return; }
+  const bad=t=>{const m=q('#pm_msg');m.className='msg show bad';m.textContent=t;};
+  q('#pm_save').onclick=async function(){
+    const name=q('#pm_name').value.trim(), em=q('#pm_email').value.trim();
+    if(!name) return bad('Full name is required.');
+    if(!em) return bad('Email is required — it is used to receive your password reset code.');
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return bad('Enter a valid email address.');
     this.disabled=true;
-    const upd={full_name:$('p_name').value,staff_id:$('p_staff').value,phone:$('p_phone').value};
+    const upd={full_name:name,staff_id:q('#pm_staff').value.trim()||null,phone:q('#pm_phone').value.trim()||null};
     if(newAvatar)upd.avatar_url=newAvatar;
     const {error}=await sb.from('profiles').update(upd).eq('id',ME.id);
+    if(error){ this.disabled=false; return bad(/duplicate|unique/i.test(error.message)?'That Staff ID is already used by another user.':error.message); }
     let note='';
-    const em=$('p_email').value.trim();
-    if(!error && em && em!==(p.email||ME.email)){
+    if(em.toLowerCase()!==String(curEmail).toLowerCase()){
       const {error:ee}=await sb.auth.updateUser({email:em});
-      if(ee) note=' (email unchanged: '+ee.message+')';
+      if(ee) note=' Email was not changed: '+ee.message;
       else { await sb.from('profiles').update({email:em}).eq('id',ME.id); PROFILE.email=em; note=' Check your inbox to confirm the new email.'; }
     }
-    this.disabled=false;
-    if(error){ setMsg('pMsg','bad',error.message); return; }
-    Object.assign(PROFILE,upd); setMsg('pMsg','ok','Profile updated.'+note); setEdit(false);
+    Object.assign(PROFILE,upd);
     $('uname').textContent=PROFILE.full_name||ME.email; if(newAvatar)$('tbAvatar').src=newAvatar;
+    close(); viewProfile(); popup('Profile updated.'+note);
   };
 }
 
 /* ---------- helpers ---------- */
-function isAdmin(){ return !!(PROFILE&&PROFILE.role==='admin'); }
-/* edit one delivery record (History) — officers and admins */
-function editSubmission(s){
-  if(!s)return;
-  editModal('Edit delivery record — '+escHtml(s.card_holder_name),[
-    {key:'branch_code',label:'Branch Code (numbers only)',value:s.branch_code},
-    {key:'delivery_name',label:'Delivery name',value:s.delivery_name},
-    {key:'staff_id',label:'Staff ID (numbers only)',value:s.staff_id},
-    {key:'delivery_unit',label:'Unit',value:s.delivery_unit,options:OPTIONS.unit||[]},
-    {key:'delivery_date',label:'Delivery date',value:s.delivery_date,type:'date'},
-    {key:'delivery_card_status',label:'Card status',value:s.delivery_card_status,options:OPTIONS.cardStatus||[]},
-    {key:'remark',label:'Remark',value:s.remark}
-  ],async v=>{
-    for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'])
-      if(!v[k])return 'Please fill in all required information.';
-    if(!/^\d+$/.test(v.branch_code))return 'Branch Code must be a number.';
-    if(!/^\d+$/.test(v.staff_id))return 'Staff ID must be a number.';
-    if(v.delivery_card_status.toLowerCase()!=='delivered'&&!v.remark)return 'Remark is required when the status is not "Delivered".';
-    const {data:c}=await sb.from('merchant_card_detail').select('create_date').eq('id',s.card_ref).maybeSingle();
-    if(c&&c.create_date&&v.delivery_date<c.create_date)return "Delivery Date cannot be earlier than the card's create date ("+c.create_date+").";
-    v.remark=v.remark||null;
-    const {error}=await sb.from('submissions').update(v).eq('id',s.id);
-    if(error)return subErr(error.message);
-    viewHistory();
+/* Searchable dropdown: type a keyword to filter the list, arrow keys / Enter / Tab
+   or click to pick. Free typing is still allowed (e.g. a branch not in the list). */
+function comboBox(input,list,getOptions){
+  let shown=[],idx=-1;
+  function draw(){
+    const q=input.value.trim().toLowerCase();
+    const all=(getOptions()||[]).map(String);
+    shown=q?all.filter(o=>o.toLowerCase().includes(q)):all;
+    idx=shown.length?0:-1;
+    list.innerHTML=shown.length?shown.map((o,i)=>'<div class="combo-opt'+(i===idx?' on':'')+'" data-i="'+i+'">'+escHtml(o)+'</div>').join('')
+      :'<div class="combo-empty">'+(q?'No match — "'+escHtml(input.value.trim())+'" will be used':'No options')+'</div>';
+    list.classList.add('open');
+  }
+  function hi(){ list.querySelectorAll('.combo-opt').forEach((el,i)=>el.classList.toggle('on',i===idx)); const el=list.querySelector('.combo-opt.on'); if(el)el.scrollIntoView({block:'nearest'}); }
+  function choose(i){ if(i>=0&&shown[i]!=null){ input.value=shown[i]; } list.classList.remove('open'); }
+  input.addEventListener('focus',draw);
+  input.addEventListener('input',draw);
+  input.addEventListener('keydown',e=>{
+    if(!list.classList.contains('open')&&(e.key==='ArrowDown'||e.key==='ArrowUp')){draw();e.preventDefault();return;}
+    if(e.key==='ArrowDown'){ if(shown.length){idx=(idx+1)%shown.length;hi();} e.preventDefault(); }
+    else if(e.key==='ArrowUp'){ if(shown.length){idx=(idx-1+shown.length)%shown.length;hi();} e.preventDefault(); }
+    else if(e.key==='Enter'){ if(list.classList.contains('open')&&idx>=0){choose(idx);e.preventDefault();} }
+    else if(e.key==='Tab'){ if(list.classList.contains('open')&&idx>=0&&input.value.trim()&&shown[idx].toLowerCase()!==input.value.trim().toLowerCase())choose(idx); else list.classList.remove('open'); }
+    else if(e.key==='Escape'){ list.classList.remove('open'); }
   });
+  list.addEventListener('mousedown',e=>{ const el=e.target.closest('.combo-opt'); if(el){ e.preventDefault(); choose(+el.getAttribute('data-i')); } });
+  input.addEventListener('blur',()=>setTimeout(()=>list.classList.remove('open'),120));
 }
+/* Yes/No confirmation box (used before Remove / Deactivate) */
+function confirmBox(msg,yesLabel,onYes){
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2600;padding:20px';
+  o.innerHTML='<div style="background:#fff;border-radius:12px;max-width:360px;width:100%;padding:18px;text-align:center"><div style="color:#1a1a1a;font-size:14px;line-height:1.5;margin-bottom:14px" id="cbMsg"></div>'+
+    '<div style="display:flex;gap:8px"><button class="btn-sm" id="cbNo" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button class="btn-sm" id="cbYes" style="flex:1;background:var(--danger);padding:10px"></button></div></div>';
+  document.body.appendChild(o);
+  o.querySelector('#cbMsg').textContent=msg; o.querySelector('#cbYes').textContent=yesLabel||'Yes';
+  o.querySelector('#cbNo').onclick=()=>o.remove();
+  o.addEventListener('click',e=>{if(e.target===o)o.remove();});
+  o.querySelector('#cbYes').onclick=async()=>{o.remove();await onYes();};
+}
+const IS_ADMIN=()=>!!(PROFILE&&PROFILE.role==='admin');
 /* latest submission per card_ref (by created_at) */
 function latestByRef(subs){ const m={}; (subs||[]).forEach(s=>{const k=String(s.card_ref); if(!m[k]||new Date(s.created_at)>new Date(m[k].created_at))m[k]=s;}); return m; }
 /* shared filter bar: From/To (delivery date), Unit, Card status, Clear, Export */
@@ -832,6 +956,7 @@ function filterBar(p,units,statuses){
     '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">Unit</label><select id="'+p+'Unit" style="width:150px"><option value="">All</option>'+u+'</select></div>'+
     '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">Card status</label><select id="'+p+'Status" style="width:150px"><option value="">All</option>'+s+'</select></div>'+
     '<button class="btn-sm" id="'+p+'Clear" style="background:var(--hint);padding:9px 14px">Clear</button>'+
+    '<button class="btn-sm" id="'+p+'Search" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
     '<button class="btn-sm" id="'+p+'Export" style="background:var(--accent);padding:9px 14px">Export Excel</button>'+
   '</div>';
 }
@@ -866,9 +991,13 @@ function editModal(title,fields,onSave){
   o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2500;padding:16px';
   o.innerHTML='<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:18px;max-height:85vh;overflow:auto">'+
     '<div style="font-weight:700;font-size:16px;margin-bottom:4px">'+title+'</div>'+
-    fields.map((f,i)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+f.label+'</label>'+(f.options
-      ?'<select id="em_'+i+'">'+(()=>{const o=f.options.slice();if(f.value&&!o.includes(f.value))o.unshift(f.value);return '<option value="">Select…</option>'+o.map(x=>'<option'+(x===f.value?' selected':'')+'>'+escHtml(x)+'</option>').join('');})()+'</select>'
-      :'<input id="em_'+i+'" type="'+(f.type||'text')+'" value="'+escHtml(f.value)+'"'+(f.readonly?' readonly style="background:#f3f4f6"':'')+'>')).join('')+
+    fields.map((f,i)=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+f.label+'</label>'+
+      (f.type==='select'
+        ? '<select id="em_'+i+'">'+[...new Set([f.value||''].concat(f.options||[]))].map(o=>'<option value="'+escHtml(o)+'"'+(o===(f.value||'')?' selected':'')+'>'+escHtml(o||'Select…')+'</option>').join('')+'</select>'
+        : f.type==='textarea'
+        ? '<textarea id="em_'+i+'" rows="2">'+escHtml(f.value)+'</textarea>'
+        : '<input id="em_'+i+'" type="'+(f.type||'text')+'" value="'+escHtml(f.value)+'"'+(f.readonly?' readonly style="background:#f3f4f6"':'')+'>')+
+      (f.hint?'<div class="hint">'+escHtml(f.hint)+'</div>':'')).join('')+
     '<div style="display:flex;gap:8px;margin-top:16px"><button id="em_cancel" class="btn-sm" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button id="em_save" class="btn-sm" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
   document.body.appendChild(o);
   const close=()=>o.remove();
