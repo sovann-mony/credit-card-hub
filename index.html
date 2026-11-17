@@ -651,8 +651,15 @@ async function settingsRef(key){
   if(error){body.innerHTML='<div class="empty">'+error.message+'</div>';return;}
   body.innerHTML='<div style="display:flex;gap:8px;margin-bottom:12px"><input id="newRef" placeholder="Add '+c.label+'…" style="flex:1"><button class="btn-sm" style="background:var(--accent);padding:10px 14px" id="addRef">Add</button></div><div id="refList"></div>';
   $('refList').innerHTML=(data&&data.length)?data.map(r=>'<div class="card" style="display:flex;align-items:center;gap:8px;padding:10px"><span style="flex:1">'+ea(r.label)+'</span><button class="btn-sm" style="background:var(--ok)" data-edit="'+r.id+'">Edit</button><button class="btn-sm" style="background:var(--danger)" data-del="'+r.id+'">Remove</button></div>').join(''):'<div class="empty">No items yet.</div>';
-  $('addRef').onclick=async()=>{const v=$('newRef').value.trim();if(!v)return popup('Enter a value.');const {error}=await sb.from(c.table).insert({label:v});if(error)popup(error.message);else{await loadOptions();settingsRef(key);}};
-  body.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const id=b.getAttribute('data-edit');const row=(data||[]).find(x=>String(x.id)===id);editModal('Edit '+c.label,[{key:'label',label:c.label,value:row.label}],async v=>{if(!v.label)return 'Enter a value.';const {error}=await sb.from(c.table).update({label:v.label}).eq('id',id);if(error)return error.message;await loadOptions();settingsRef(key);});});
+  // Duplicates are rejected (same text, ignoring upper/lower case and extra spaces)
+  const normL=x=>String(x==null?'':x).trim().replace(/\s+/g,' ').toLowerCase();
+  const dupOf=(v,exceptId)=>(data||[]).find(r=>normL(r.label)===normL(v)&&String(r.id)!==String(exceptId));
+  const dupMsg=(v,d)=>'"'+v+'" already exists in '+c.label+(d.label!==v?' (as "'+d.label+'")':'')+'. Duplicates are not allowed.';
+  $('addRef').onclick=async()=>{const v=$('newRef').value.trim().replace(/\s+/g,' ');if(!v)return popup('Enter a value.');
+    const d=dupOf(v); if(d) return popup(dupMsg(v,d));
+    const {error}=await sb.from(c.table).insert({label:v});if(error)popup(/duplicate|unique/i.test(error.message)?'"'+v+'" already exists in '+c.label+'. Duplicates are not allowed.':error.message);else{await loadOptions();settingsRef(key);}};
+  $('newRef').addEventListener('keydown',e=>{if(e.key==='Enter')$('addRef').click();});
+  body.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const id=b.getAttribute('data-edit');const row=(data||[]).find(x=>String(x.id)===id);editModal('Edit '+c.label,[{key:'label',label:c.label,value:row.label}],async v=>{v.label=v.label.replace(/\s+/g,' ');if(!v.label)return 'Enter a value.';const d=dupOf(v.label,id);if(d)return dupMsg(v.label,d);const {error}=await sb.from(c.table).update({label:v.label}).eq('id',id);if(error)return /duplicate|unique/i.test(error.message)?'"'+v.label+'" already exists in '+c.label+'. Duplicates are not allowed.':error.message;await loadOptions();settingsRef(key);});});
   body.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const {error}=await sb.from(c.table).delete().eq('id',b.getAttribute('data-del'));if(error)popup(error.message);else{await loadOptions();settingsRef(key);}});
 }
 async function settingsUsers(){
@@ -692,6 +699,11 @@ async function settingsUsers(){
       '<button class="btn-xs" style="background:'+(active?'var(--danger)':'var(--ok)')+'" data-toggle="'+p.id+'" data-self="'+(self?'1':'0')+'" data-name="'+esc(p.full_name||p.email||'this user')+'" data-active="'+(active?'1':'0')+'">'+(active?'Deactivate':'Activate')+'</button></td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No users.</td></tr>';
   $('nu_add').onclick=async function(){const name=$('nu_name').value.trim(),email=$('nu_email').value.trim();
     if(!name||!email)return popup('Enter at least a name and email.');
+    { const sid=$('nu_staff').value.trim(), em=email.toLowerCase();
+      const dE=(data||[]).find(p=>String(p.email||'').trim().toLowerCase()===em);
+      if(dE) return popup('A user with the email '+email+' already exists ('+(dE.full_name||'no name')+'). Duplicates are not allowed.');
+      const dS=sid&&(data||[]).find(p=>String(p.staff_id||'').trim()===sid);
+      if(dS) return popup('Staff ID '+sid+' is already used by '+(dS.full_name||dS.email||'another user')+'. Duplicates are not allowed.'); }
     this.disabled=true;
     const {data:{session}}=await sb.auth.getSession();
     let res;
