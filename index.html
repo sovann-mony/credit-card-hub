@@ -509,46 +509,63 @@ function submitUploader(host){
       const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
       const raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:'',raw:true});
       if(!raw.length){ popup('The file has no rows.'); return; }
-      parsed=raw.map(row=>{const o={};Object.keys(row).forEach(k=>{const f=MAP[norm(k)];if(!f)return;let val=row[k];if(f==='delivery_date'||val instanceof Date)val=fmtDate(val);else val=typeof val==='string'?val.trim():String(val).trim();o[f]=val;});return o;}).filter(o=>o.cardholder_name);
+      parsed=raw.map((row,i)=>{const o={_row:i+2};Object.keys(row).forEach(k=>{const f=MAP[norm(k)];if(!f)return;let val=row[k];if(f==='delivery_date'||val instanceof Date)val=fmtDate(val);else val=typeof val==='string'?val.trim():String(val).trim();o[f]=val;});return o;}).filter(o=>o.cardholder_name);
       if(!parsed.length){ popup('No valid rows found. The file needs a cardholder_name column.'); return; }
       $('sPrev').innerHTML='<div class="card" style="margin-top:10px">'+kv('Rows found',parsed.length)+kv('Sample',parsed.slice(0,3).map(p=>p.cardholder_name).join(', '))+'</div>';
-      $('sUpBtn').disabled=false; $('sUpResult').innerHTML='';
+      $('sUpBtn').disabled=false; $('sUpResult').innerHTML=''; $('sUpMsg').className='msg';
     }catch(err){ popup('Could not read the file: '+err.message); } };
     r.readAsArrayBuffer(file);
   };
   $('sUpBtn').onclick=async function(){
-    if(!parsed||!parsed.length)return; this.disabled=true; setMsg('sUpMsg','ok','Submitting '+parsed.length+' record(s)…');
-    const {data:cards,error:cErr}=await sb.from('merchant_card_detail').select('id,cardholder_name,create_date,reason_for_reissue');
+    if(!parsed||!parsed.length)return; this.disabled=true; setMsg('sUpMsg','ok','Checking '+parsed.length+' record(s)…');
+    const {data:cards,error:cErr}=await fetchAll('merchant_card_detail','id,cardholder_name,create_date,reason_for_reissue');
     if(cErr){ this.disabled=false; setMsg('sUpMsg','bad',cErr.message); return; }
-    const {data:allSubs}=await sb.from('submissions').select('card_ref,delivery_card_status,created_at');
+    const {data:allSubs,error:sErr}=await fetchAll('submissions','id,card_ref,delivery_card_status,delivery_name,delivery_date,created_at');
+    if(sErr){ this.disabled=false; setMsg('sUpMsg','bad',sErr.message); return; }
     const LATEST=latestByRef(allSubs);
-    const byName={}; (cards||[]).forEach(c=>{const k=String(c.cardholder_name).trim().toLowerCase();(byName[k]=byName[k]||[]).push(c);});
+    const nk=v=>String(v==null?'':v).trim().replace(/\s+/g,' ').toLowerCase();
+    const byName={}; (cards||[]).forEach(c=>{const k=nk(c.cardholder_name);(byName[k]=byName[k]||[]).push(c);});
     const reqd=['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'];
-    let ok=0; const fails=[];
-    for(let i=0;i<parsed.length;i++){ const p=parsed[i], rowno=i+2, name=String(p.cardholder_name).trim();
-      const cands=byName[name.toLowerCase()]||[]; let card=null;
-      if(cands.length===0){ fails.push([rowno,name,'Card holder not found in Card Data']); continue; }
+    const inFile={};   // card id -> {row, status} submitted earlier in this same file
+    let ok=0; const fails=[];   // [row, name, reason, deliveryDate(file), status(file), detail]
+    for(let i=0;i<parsed.length;i++){ const p=parsed[i], rowno=p._row, name=String(p.cardholder_name).trim().replace(/\s+/g,' ');
+      const F=(reason,detail)=>fails.push([rowno,name,reason,p.delivery_date,p.delivery_card_status,detail||'']);
+      if(i%10===0) setMsg('sUpMsg','ok','Submitting… '+i+' / '+parsed.length);
+      const cands=byName[nk(name)]||[]; let card=null;
+      if(cands.length===0){ F('Card holder not found in Card Data'); continue; }
       if(cands.length===1){ card=cands[0]; }
-      else { const want=(p.reason_for_reissue&&String(p.reason_for_reissue).trim().toLowerCase())||'';
-        const match=cands.filter(c=>((c.reason_for_reissue&&String(c.reason_for_reissue).trim().toLowerCase())||'')===want);
-        if(match.length===1)card=match[0]; else { fails.push([rowno,name,cands.length+' cards for this name — add a reason_for_reissue column to pick one']); continue; } }
+      else { const want=nk(p.reason_for_reissue);
+        const match=cands.filter(c=>nk(c.reason_for_reissue)===want);
+        if(match.length===1)card=match[0]; else { F(cands.length+' cards for this name — add a reason_for_reissue column to pick one'); continue; } }
+      const prevInFile=inFile[card.id];
+      if(prevInFile && prevInFile.status!=='on hold'){ F('Duplicate — same card as row '+prevInFile.row+' in this file'); continue; }
       const lsub=LATEST[String(card.id)];
-      if(lsub && String(lsub.delivery_card_status||'').trim().toLowerCase()!=='on hold'){ fails.push([rowno,name,'Already submitted — only "On Hold" cards can be submitted again']); continue; }
-      const miss=reqd.filter(k=>!p[k]); if(miss.length){ fails.push([rowno,name,'Missing: '+miss.join(', ')]); continue; }
-      if(!/^\d+$/.test(String(p.branch_code))){ fails.push([rowno,name,'Branch Code must be a number']); continue; }
-      if(!/^\d+$/.test(String(p.staff_id))){ fails.push([rowno,name,'Staff ID must be a number']); continue; }
-      if(!isISO(p.delivery_date)){ fails.push([rowno,name,'Delivery Date "'+p.delivery_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)']); continue; }
-      if(card.create_date && p.delivery_date < card.create_date){ fails.push([rowno,name,'Delivery Date earlier than card create date ('+fmtD(card.create_date)+')']); continue; }
-      if(String(p.delivery_card_status).trim().toLowerCase()!=='delivered' && !(p.remark&&String(p.remark).trim())){ fails.push([rowno,name,'Remark required when status is not Delivered']); continue; }
+      if(!prevInFile && lsub && String(lsub.delivery_card_status||'').trim().toLowerCase()!=='on hold'){
+        F('Duplicate — this card was already submitted (only "On Hold" cards can be submitted again)',
+          'Earlier submission: '+(lsub.delivery_card_status||'—')+' · by '+(lsub.delivery_name||'—')+' · delivery date '+(fmtD(lsub.delivery_date)||'—')+' · submitted '+fmtD(lsub.created_at)); continue; }
+      const miss=reqd.filter(k=>!p[k]); if(miss.length){ F('Missing: '+miss.join(', ')); continue; }
+      if(!/^\d+$/.test(String(p.branch_code))){ F('Branch Code must be a number'); continue; }
+      if(!/^\d+$/.test(String(p.staff_id))){ F('Staff ID must be a number'); continue; }
+      if(!isISO(p.delivery_date)){ F('Delivery Date "'+p.delivery_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)'); continue; }
+      if(card.create_date && p.delivery_date < card.create_date){ F('Delivery Date earlier than card create date ('+fmtD(card.create_date)+')'); continue; }
+      if(String(p.delivery_card_status).trim().toLowerCase()!=='delivered' && !(p.remark&&String(p.remark).trim())){ F('Remark required when status is not Delivered'); continue; }
       const payload={card_ref:String(card.id),card_holder_name:card.cardholder_name,branch_code:String(p.branch_code),delivery_name:String(p.delivery_name),staff_id:String(p.staff_id),delivery_unit:String(p.delivery_unit),delivery_date:p.delivery_date,delivery_card_status:String(p.delivery_card_status),remark:(p.remark&&String(p.remark).trim())||null};
       const {error}=await sb.from('submissions').insert(payload);
-      if(error){ fails.push([rowno,name,subErr(error.message)]); } else ok++;
+      if(error){ F(/ALREADY_SUBMITTED|\bDUP\b|duplicate|unique/i.test(error.message)?'Duplicate — this card was already submitted (only "On Hold" cards can be submitted again)':subErr(error.message)); }
+      else { ok++; inFile[card.id]={row:rowno,status:String(p.delivery_card_status).trim().toLowerCase()}; }
     }
     this.disabled=false;
-    setMsg('sUpMsg', fails.length?'bad':'ok', ok+' submitted'+(fails.length?', '+fails.length+' failed':'')+'.');
-    $('sUpResult').innerHTML = fails.length? '<div style="overflow-x:auto;margin-top:10px"><table class="htable"><thead><tr><th>Row</th><th>Card holder</th><th>Not submitted — reason</th></tr></thead><tbody>'+fails.map(f=>'<tr><td>'+f[0]+'</td><td>'+escHtml(f[1])+'</td><td>'+escHtml(f[2])+'</td></tr>').join('')+'</tbody></table></div>' : '<div class="card" style="margin-top:10px;text-align:center">All records submitted. 🎉</div>';
-    if(ok){ $('s_file').value=''; parsed=null; $('sPrev').innerHTML=''; $('sUpBtn').disabled=true; }
+    $('sUpMsg').className='msg'; $('sUpMsg').textContent=''; $('sUpResult').innerHTML='';
+    fails.sort((x,y)=>x[0]-y[0]);
+    uploadSummary({total:parsed.length,added:ok,addedLabel:'Records submitted',
+      headers:['Row','Card holder','Delivery date (file)','Status (file)','Rejected — reason'],
+      rows:fails.map(f=>[f[0],'<b>'+escHtml(f[1])+'</b>',escHtml(fmtD(f[3])||'—'),escHtml(f[4]||'—'),reasonCell(f[2],f[5])]),
+      exportName:'rejected_delivery_records.xlsx',
+      exportHeaders:['Row','Card holder','Delivery date (file)','Status (file)','Reason','Details'],
+      exportRows:fails.map(f=>[f[0],f[1],fmtD(f[3]),f[4]||'',f[2],f[5]||''])});
+    $('s_file').value=''; parsed=null; $('sPrev').innerHTML=''; $('sUpBtn').disabled=true;
   };
+
 }
 async function viewHistory(){
   $('main').innerHTML='<h2>History</h2><div id="histBar"></div><div id="hist"><div class="empty">Loading…</div></div>';
@@ -1109,30 +1126,47 @@ function credBox(title,name,staffId,email,password,note){
   o.querySelector('#cb_all').onclick=async function(){flash(this,await copyText(all));};
   o.querySelector('#cb_close').onclick=()=>o.remove();
 }
-/* Card Data upload summary: counts + full details of every rejected row, in one pop-up.
-   Closing it (OK) leaves nothing behind on the page. */
-function uploadResultBox(added,rejects,total){
-  const o=document.createElement('div');
-  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2700;padding:16px';
-  const ok=!rejects.length;
+/* Upload summary pop-up (Card Data and Submit uploads): counts + full details of every
+   rejected row. Closing it (OK) leaves nothing behind on the page.
+   o = {total, added, addedLabel, headers:[...], rows:[[html cells]], exportName, exportHeaders, exportRows} */
+function uploadSummary(o){
+  const box=document.createElement('div');
+  box.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2700;padding:16px';
+  const ok=!o.rows.length;
   const stat=(n,l,c)=>'<div style="flex:1;background:#f3f4f6;border-radius:9px;padding:10px;text-align:center"><div style="font-size:22px;font-weight:700;color:'+c+'">'+n+'</div><div style="font-size:12px;color:#6b7280">'+l+'</div></div>';
-  const rows=rejects.map(f=>{const ex=f[4];
-    return '<tr><td>'+f[0]+'</td><td style="font-weight:600">'+escHtml(f[1])+'</td><td>'+escHtml(fmtD(f[3])||'—')+'</td>'+
-      '<td style="color:#dc2626;white-space:normal;min-width:220px">'+escHtml(f[2])+
-      (ex?'<div style="color:#6b7280;margin-top:3px">Existing card: '+escHtml(ex.cardholder_name)+' · created '+escHtml(fmtD(ex.create_date)||'—')+(ex.address?' · '+escHtml(ex.address):'')+'</div>':'')+'</td></tr>';}).join('');
-  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:820px;width:100%;padding:18px;max-height:88vh;display:flex;flex-direction:column">'+
+  box.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:880px;width:100%;padding:18px;max-height:88vh;display:flex;flex-direction:column">'+
     '<div style="font-weight:700;font-size:16px;margin-bottom:10px">'+(ok?'✅ Upload complete':'⚠️ Upload finished — some rows were rejected')+'</div>'+
-    '<div style="display:flex;gap:8px;margin-bottom:12px">'+stat(total,'Rows in file','#1a1a1a')+stat(added,'Cards added','#16a34a')+stat(rejects.length,'Rejected','#dc2626')+'</div>'+
-    (ok?'':'<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:9px;flex:1;min-height:0"><table class="htable" style="background:#fff"><thead><tr><th>Row</th><th>Customer name</th><th>Create date (file)</th><th>Rejected — reason</th></tr></thead><tbody>'+rows+'</tbody></table></div>')+
+    '<div style="display:flex;gap:8px;margin-bottom:12px">'+stat(o.total,'Rows in file','#1a1a1a')+stat(o.added,o.addedLabel,'#16a34a')+stat(o.rows.length,'Rejected','#dc2626')+'</div>'+
+    (ok?'':'<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:9px;flex:1;min-height:0"><table class="htable" style="background:#fff"><thead><tr>'+o.headers.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
+      o.rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>')+
     '<div style="display:flex;gap:8px;margin-top:14px">'+
       (ok?'':'<button class="btn-sm" id="ur_dl" style="flex:1;background:#6b7280;padding:10px">⬇ Download rejected list (Excel)</button>')+
       '<button class="btn-sm" id="ur_ok" style="flex:1;background:var(--accent);padding:10px">OK</button></div></div>';
-  document.body.appendChild(o);
-  o.querySelector('#ur_ok').onclick=()=>o.remove();
-  const dl=o.querySelector('#ur_dl');
-  if(dl) dl.onclick=()=>exportXlsx('rejected_cards.xlsx',['Row','Customer name','Create date (file)','Reason','Existing card created','Existing card address'],
-    rejects.map(f=>[f[0],f[1],fmtD(f[3]),f[2],f[4]?fmtD(f[4].create_date):'',f[4]?(f[4].address||''):'']));
-  setTimeout(()=>o.querySelector('#ur_ok').focus(),50);
+  document.body.appendChild(box);
+  box.querySelector('#ur_ok').onclick=()=>box.remove();
+  const dl=box.querySelector('#ur_dl'); if(dl) dl.onclick=()=>exportXlsx(o.exportName,o.exportHeaders,o.exportRows);
+  setTimeout(()=>box.querySelector('#ur_ok').focus(),50);
+}
+const reasonCell=(reason,detail)=>'<div style="color:#dc2626;white-space:normal;min-width:220px">'+escHtml(reason)+'</div>'+(detail?'<div style="color:#6b7280;white-space:normal;margin-top:3px">'+escHtml(detail)+'</div>':'');
+/* Card Data upload result. rejects: [row, name, reason, fileDate, existingCard] */
+function uploadResultBox(added,rejects,total){
+  const exTxt=ex=>ex?'Existing card: '+ex.cardholder_name+' · created '+(fmtD(ex.create_date)||'—')+(ex.address?' · '+ex.address:''):'';
+  uploadSummary({total,added,addedLabel:'Cards added',
+    headers:['Row','Customer name','Create date (file)','Rejected — reason'],
+    rows:rejects.map(f=>[f[0],'<b>'+escHtml(f[1])+'</b>',escHtml(fmtD(f[3])||'—'),reasonCell(f[2],exTxt(f[4]))]),
+    exportName:'rejected_cards.xlsx',
+    exportHeaders:['Row','Customer name','Create date (file)','Reason','Existing card created','Existing card address'],
+    exportRows:rejects.map(f=>[f[0],f[1],fmtD(f[3]),f[2],f[4]?fmtD(f[4].create_date):'',f[4]?(f[4].address||''):''])});
+}
+/* read every row of a table (Supabase returns at most 1,000 rows per request) */
+async function fetchAll(table,cols){
+  let out=[];
+  for(let from=0;;from+=1000){
+    const {data,error}=await sb.from(table).select(cols).order('id').range(from,from+999);
+    if(error) return {data:null,error};
+    out=out.concat(data||[]); if(!data||data.length<1000) break;
+  }
+  return {data:out,error:null};
 }
 /* Yes/No confirmation box (used before Remove / Deactivate) */
 function confirmBox(msg,yesLabel,onYes){
