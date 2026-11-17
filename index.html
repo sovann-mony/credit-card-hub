@@ -852,18 +852,18 @@ function renderUploader(host,onDone){
     // all existing NEW cards (paged, so lists over 1,000 cards are fully checked)
     const existingNew=new Map();
     for(let from=0;;from+=1000){
-      const {data,error}=await sb.from('merchant_card_detail').select('cardholder_name,reason_for_reissue').order('id').range(from,from+999);
+      const {data,error}=await sb.from('merchant_card_detail').select('cardholder_name,address,create_date,reason_for_reissue').order('id').range(from,from+999);
       if(error){ this.disabled=false; setMsg('upMsg','bad',error.message); return; }
-      (data||[]).forEach(r=>{ if(!(r.reason_for_reissue&&String(r.reason_for_reissue).trim())) existingNew.set(nameKey(r.cardholder_name),r.cardholder_name); });
+      (data||[]).forEach(r=>{ if(!(r.reason_for_reissue&&String(r.reason_for_reissue).trim())) existingNew.set(nameKey(r.cardholder_name),r); });
       if(!data||data.length<1000) break;
     }
     const seenInFile=new Map(), toInsert=[], rejects=[];
     parsed.forEach(p=>{
       const reason=(p.reason_for_reissue&&String(p.reason_for_reissue).trim())||null, key=nameKey(p.cardholder_name), name=String(p.cardholder_name).trim().replace(/\s+/g,' ');
-      if(p.create_date && !isISO(p.create_date)){ rejects.push([p._row,name,'Create date "'+p.create_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)']); return; }
+      if(p.create_date && !isISO(p.create_date)){ rejects.push([p._row,name,'Create date "'+p.create_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)',p.create_date,null]); return; }
       if(!reason){
-        if(existingNew.has(key)){ rejects.push([p._row,name,'Duplicate — this customer already has a new card in Card Data']); return; }
-        if(seenInFile.has(key)){ rejects.push([p._row,name,'Duplicate — same new card as row '+seenInFile.get(key)+' in this file']); return; }
+        if(existingNew.has(key)){ rejects.push([p._row,name,'Duplicate — this customer already has a new card in Card Data',p.create_date,existingNew.get(key)]); return; }
+        if(seenInFile.has(key)){ rejects.push([p._row,name,'Duplicate — same new card as row '+seenInFile.get(key)+' in this file',p.create_date,null]); return; }
         seenInFile.set(key,p._row);
       }
       toInsert.push({_row:p._row,cardholder_name:name,address:p.address||null,create_date:p.create_date||null,reason_for_reissue:reason});
@@ -876,16 +876,12 @@ function renderUploader(host,onDone){
       if(!error){ added+=chunk.length; continue; }
       // a chunk failed (e.g. someone added the same customer meanwhile) — retry row by row so only the bad rows are rejected
       for(const r of chunk){ const {_row,...row}=r; const {error:e1}=await sb.from('merchant_card_detail').insert(row);
-        if(e1) rejects.push([_row,row.cardholder_name,/duplicate|unique/i.test(e1.message)?'Duplicate — this customer already has a new card in Card Data':e1.message]); else added++; }
+        if(e1) rejects.push([_row,row.cardholder_name,/duplicate|unique/i.test(e1.message)?'Duplicate — this customer already has a new card in Card Data':e1.message,row.create_date,null]); else added++; }
     }
     this.disabled=false;
     rejects.sort((x,y)=>x[0]-y[0]);
-    setMsg('upMsg',rejects.length?'bad':'ok',added+' card'+(added===1?'':'s')+' added'+(rejects.length?', '+rejects.length+' rejected':'')+'.');
-    $('upResult').innerHTML=rejects.length
-      ? '<div style="overflow-x:auto;margin-top:10px"><table class="htable"><thead><tr><th>Row</th><th>Customer name</th><th>Rejected — reason</th></tr></thead><tbody>'+
-        rejects.map(f=>'<tr><td>'+f[0]+'</td><td>'+escHtml(f[1])+'</td><td style="color:var(--danger)">'+escHtml(f[2])+'</td></tr>').join('')+'</tbody></table></div>'
-      : '';
-    if(rejects.length) popup(rejects.length+' row'+(rejects.length===1?' was':'s were')+' rejected (see the list under the upload button). '+added+' card'+(added===1?' was':'s were')+' added.');
+    $('upMsg').className='msg'; $('upMsg').textContent=''; $('upResult').innerHTML='';
+    uploadResultBox(added,rejects,parsed.length);
     $('f_file').value=''; parsed=null; $('upPrev').innerHTML=''; $('upBtn').disabled=true;
     if(added&&onDone)onDone();
   };
@@ -1112,6 +1108,31 @@ function credBox(title,name,staffId,email,password,note){
   o.querySelectorAll('[data-copy]').forEach(btn=>btn.onclick=async()=>flash(btn,await copyText(btn.getAttribute('data-copy')==='pw'?password:String(staffId||''))));
   o.querySelector('#cb_all').onclick=async function(){flash(this,await copyText(all));};
   o.querySelector('#cb_close').onclick=()=>o.remove();
+}
+/* Card Data upload summary: counts + full details of every rejected row, in one pop-up.
+   Closing it (OK) leaves nothing behind on the page. */
+function uploadResultBox(added,rejects,total){
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2700;padding:16px';
+  const ok=!rejects.length;
+  const stat=(n,l,c)=>'<div style="flex:1;background:#f3f4f6;border-radius:9px;padding:10px;text-align:center"><div style="font-size:22px;font-weight:700;color:'+c+'">'+n+'</div><div style="font-size:12px;color:#6b7280">'+l+'</div></div>';
+  const rows=rejects.map(f=>{const ex=f[4];
+    return '<tr><td>'+f[0]+'</td><td style="font-weight:600">'+escHtml(f[1])+'</td><td>'+escHtml(fmtD(f[3])||'—')+'</td>'+
+      '<td style="color:#dc2626;white-space:normal;min-width:220px">'+escHtml(f[2])+
+      (ex?'<div style="color:#6b7280;margin-top:3px">Existing card: '+escHtml(ex.cardholder_name)+' · created '+escHtml(fmtD(ex.create_date)||'—')+(ex.address?' · '+escHtml(ex.address):'')+'</div>':'')+'</td></tr>';}).join('');
+  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:820px;width:100%;padding:18px;max-height:88vh;display:flex;flex-direction:column">'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:10px">'+(ok?'✅ Upload complete':'⚠️ Upload finished — some rows were rejected')+'</div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:12px">'+stat(total,'Rows in file','#1a1a1a')+stat(added,'Cards added','#16a34a')+stat(rejects.length,'Rejected','#dc2626')+'</div>'+
+    (ok?'':'<div style="overflow:auto;border:1px solid #e5e7eb;border-radius:9px;flex:1;min-height:0"><table class="htable" style="background:#fff"><thead><tr><th>Row</th><th>Customer name</th><th>Create date (file)</th><th>Rejected — reason</th></tr></thead><tbody>'+rows+'</tbody></table></div>')+
+    '<div style="display:flex;gap:8px;margin-top:14px">'+
+      (ok?'':'<button class="btn-sm" id="ur_dl" style="flex:1;background:#6b7280;padding:10px">⬇ Download rejected list (Excel)</button>')+
+      '<button class="btn-sm" id="ur_ok" style="flex:1;background:var(--accent);padding:10px">OK</button></div></div>';
+  document.body.appendChild(o);
+  o.querySelector('#ur_ok').onclick=()=>o.remove();
+  const dl=o.querySelector('#ur_dl');
+  if(dl) dl.onclick=()=>exportXlsx('rejected_cards.xlsx',['Row','Customer name','Create date (file)','Reason','Existing card created','Existing card address'],
+    rejects.map(f=>[f[0],f[1],fmtD(f[3]),f[2],f[4]?fmtD(f[4].create_date):'',f[4]?(f[4].address||''):'']));
+  setTimeout(()=>o.querySelector('#ur_ok').focus(),50);
 }
 /* Yes/No confirmation box (used before Remove / Deactivate) */
 function confirmBox(msg,yesLabel,onYes){
