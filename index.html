@@ -472,12 +472,12 @@ function submitSingle(host){
       const {error}=await sb.from('submissions').insert(payload);
       this.disabled=false;
       if(error){ popup(subErr(error.message)); }
-      else { setMsg('subMsg','ok','Submitted successfully.'); submitSingle(host); }
+      else { submitSingle(host); submittedBox(payload); }
     }else{
       const res=await tgCall('submit',{record:payload});
       this.disabled=false;
       if(res.error){ popup(res.error); }
-      else { setMsg('subMsg','ok','Submitted successfully.'); submitSingle(host); }
+      else { submitSingle(host); submittedBox(payload); }
     }
   };
 }
@@ -1167,6 +1167,23 @@ async function fetchAll(table,cols){
     out=out.concat(data||[]); if(!data||data.length<1000) break;
   }
   return {data:out,error:null};
+}
+/* "Submitted successfully" pop-up after a single delivery record is saved */
+function submittedBox(p){
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2700;padding:16px';
+  const row=(k,v)=>'<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #f0f0f0"><span style="color:#6b7280;font-size:12.5px">'+k+'</span><span style="font-weight:600;text-align:right">'+escHtml(v||'—')+'</span></div>';
+  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:14px;max-width:380px;width:100%;padding:22px 20px 18px">'+
+    '<div style="width:64px;height:64px;border-radius:50%;background:rgba(22,163,74,.12);color:#16a34a;font-size:36px;line-height:64px;text-align:center;margin:0 auto">✓</div>'+
+    '<div style="font-weight:800;font-size:18px;text-align:center;margin:10px 0 2px">Submitted Successfully</div>'+
+    '<div style="color:#6b7280;font-size:12.5px;text-align:center;margin-bottom:12px">បានបញ្ជូនដោយជោគជ័យ</div>'+
+    row('Card holder',p.card_holder_name)+row('Delivery name',p.delivery_name)+row('Delivery date',fmtD(p.delivery_date))+row('Credit card status',p.delivery_card_status)+
+    '<button class="primary" id="sb_ok" style="margin-top:16px">OK</button></div>';
+  document.body.appendChild(o);
+  const close=()=>{ o.remove(); try{ window.scrollTo({top:0,behavior:'smooth'}); }catch(e){ window.scrollTo(0,0); } const h=$('f_holder'); if(h) h.focus(); };
+  o.querySelector('#sb_ok').onclick=close;
+  o.addEventListener('click',e=>{if(e.target===o)close();});
+  setTimeout(()=>o.querySelector('#sb_ok').focus(),50);
 }
 /* Yes/No confirmation box (used before Remove / Deactivate) */
 function confirmBox(msg,yesLabel,onYes){
