@@ -677,7 +677,7 @@ async function settingsUsers(){
     ['Card Data — edit a card',Y,Y],
     ['Card Data — remove a card',N,Y],
     ['Dashboard',Y,Y],
-    ['My Profile — view & edit own profile',Y,Y],
+    ['My Profile — view & edit own profile, change own password',Y,Y],
     ['Settings — Branch Code, Unit, Card Status lists',N,Y],
     ['Settings — add users, change role, reset password',N,Y],
     ['Settings — activate / deactivate any user',N,Y]
@@ -686,38 +686,39 @@ async function settingsUsers(){
     '<div style="overflow-x:auto"><table class="htable perm"><thead><tr><th>Feature</th><th>Officer</th><th>Admin</th></tr></thead><tbody>'+
     PERMS.map(p=>'<tr><td>'+p[0]+'</td>'+p[1]+p[2]+'</tr>').join('')+'</tbody></table></div></div>';
   body.innerHTML='<div class="card"><div class="k" style="font-weight:700;margin-bottom:6px">Add user</div>'+
-    '<input id="nu_name" placeholder="Full name"><input id="nu_staff" placeholder="Staff ID" style="margin-top:6px"><input id="nu_email" placeholder="Email" style="margin-top:6px">'+
+    '<input id="nu_name" placeholder="Full name *"><input id="nu_staff" placeholder="Staff ID * (used to sign in)" style="margin-top:6px"><input id="nu_email" placeholder="Email *" style="margin-top:6px">'+
     '<select id="nu_role" style="margin-top:6px"><option>officer</option><option>admin</option></select>'+
-    '<button class="btn-sm" style="background:var(--accent);margin-top:8px;padding:9px 14px" id="nu_add">Add user</button></div>'+
+    '<button class="btn-sm" style="background:var(--accent);margin-top:8px;padding:9px 14px" id="nu_add">Add user</button>'+
+    '<div class="hint">A password is generated automatically and shown once, so you can copy it to the new user.</div></div>'+
     '<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Name</th><th>Email</th><th>Staff ID</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody id="uBody"></tbody></table></div>'+
     '<div style="margin-top:16px">'+permHtml+'</div>';
   $('uBody').innerHTML=(data||[]).map(p=>{const active=p.active!==false,self=ME&&ME.id===p.id;return '<tr>'+
     '<td>'+esc(p.full_name||'—')+'</td><td>'+esc(p.email||'—')+'</td><td>'+esc(p.staff_id||'—')+'</td>'+
     '<td><select data-role="'+p.id+'">'+['officer','admin'].map(r=>'<option '+(r===p.role?'selected':'')+'>'+r+'</option>').join('')+'</select></td>'+
     '<td>'+(active?'<span class="pill ok">Active</span>':'<span class="pill bad">Inactive</span>')+'</td>'+
-    '<td style="white-space:nowrap"><button class="btn-xs" style="background:#6b7280;margin-right:6px" data-reset="'+p.id+'" data-email="'+esc(p.email)+'">Reset password</button>'+
+    '<td style="white-space:nowrap"><button class="btn-xs" style="background:#6b7280;margin-right:6px" data-reset="'+p.id+'" data-email="'+esc(p.email)+'" data-name="'+esc(p.full_name||p.email||'this user')+'">Reset password</button>'+
       '<button class="btn-xs" style="background:'+(active?'var(--danger)':'var(--ok)')+'" data-toggle="'+p.id+'" data-self="'+(self?'1':'0')+'" data-name="'+esc(p.full_name||p.email||'this user')+'" data-active="'+(active?'1':'0')+'">'+(active?'Deactivate':'Activate')+'</button></td></tr>';}).join('')||'<tr><td colspan="6" class="empty">No users.</td></tr>';
   $('nu_add').onclick=async function(){const name=$('nu_name').value.trim(),email=$('nu_email').value.trim();
-    if(!name||!email)return popup('Enter at least a name and email.');
+    if(!name||!$('nu_staff').value.trim()||!email)return popup('Enter the full name, Staff ID and email.');
     { const sid=$('nu_staff').value.trim(), em=email.toLowerCase();
       const dE=(data||[]).find(p=>String(p.email||'').trim().toLowerCase()===em);
       if(dE) return popup('A user with the email '+email+' already exists ('+(dE.full_name||'no name')+'). Duplicates are not allowed.');
       const dS=sid&&(data||[]).find(p=>String(p.staff_id||'').trim()===sid);
       if(dS) return popup('Staff ID '+sid+' is already used by '+(dS.full_name||dS.email||'another user')+'. Duplicates are not allowed.'); }
     this.disabled=true;
-    const {data:{session}}=await sb.auth.getSession();
-    let res;
-    try{
-      const r=await fetch(String(SUPABASE_URL).replace(/\/$/,'')+'/functions/v1/admin-users',{method:'POST',
-        headers:{'Content-Type':'application/json','apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+(session&&session.access_token||'')},
-        body:JSON.stringify({full_name:name,staff_id:$('nu_staff').value.trim(),email:email,role:$('nu_role').value})});
-      res=await r.json();
-    }catch(e){ res={error:'Network error: '+e}; }
+    const res=await adminUsersCall({action:'create',full_name:name,staff_id:$('nu_staff').value.trim(),email:email,role:$('nu_role').value});
     this.disabled=false;
-    if(res.error)popup(res.error); else { popup('User created. Ask them to open Sign in and tap "Forgot password?" to set their password.'); settingsUsers(); }
+    if(res.error) return popup(res.error);
+    settingsUsers();
+    credBox('User created',res.full_name||name,res.staff_id,res.email||email,res.password,'Copy these sign-in details and send them to the new user. They can change the password in My profile → Change password.');
   };
   $('uBody').querySelectorAll('[data-role]').forEach(s=>s.onchange=async()=>{const {error}=await sb.from('profiles').update({role:s.value}).eq('id',s.getAttribute('data-role'));popup(error?error.message:'Role updated.');});
-  $('uBody').querySelectorAll('[data-reset]').forEach(b=>b.onclick=async()=>{const em=b.getAttribute('data-email');if(!em)return popup('This user has no email on file.');const {error}=await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin+location.pathname});popup(error?error.message:'Password reset link sent to '+em+'.');});
+  $('uBody').querySelectorAll('[data-reset]').forEach(b=>b.onclick=()=>{const id=b.getAttribute('data-reset'),who=b.getAttribute('data-name');
+    confirmBox('Reset the password for '+who+'? Their current password will stop working and a new one will be generated.','Reset password',async()=>{
+      const res=await adminUsersCall({action:'reset',user_id:id});
+      if(res.error) return popup(res.error);
+      credBox('Password reset',res.full_name||who,res.staff_id,res.email,res.password,'Copy the new sign-in details and send them to the user. They can change the password in My profile → Change password.');
+    });});
   $('uBody').querySelectorAll('[data-toggle]').forEach(b=>b.onclick=()=>{
     const na=b.getAttribute('data-active')!=='1', self=b.getAttribute('data-self')==='1', who=b.getAttribute('data-name');
     const doIt=async()=>{const {error}=await sb.from('profiles').update({active:na}).eq('id',b.getAttribute('data-toggle'));
@@ -854,12 +855,50 @@ function viewProfile(){
       '<div class="pf-head"><img src="'+ea(p.avatar_url||AV_PH)+'" alt="">'+
         '<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:16px">'+ea(p.full_name||'—')+'</div>'+
         '<div class="hint" style="text-transform:capitalize">'+ea(p.role||'')+'</div></div>'+
-        '<button class="btn-sm" id="pEdit" style="background:var(--accent);padding:9px 18px">✏️ Edit</button></div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn-sm" id="pPass" style="background:#6b7280;padding:9px 14px">🔒 Change password</button><button class="btn-sm" id="pEdit" style="background:var(--accent);padding:9px 18px">✏️ Edit</button></div></div>'+
       kv('Full name',p.full_name)+kv('Staff ID',p.staff_id)+kv('Contact number',p.phone)+kv('Email',em)+
       '<div class="hint" style="margin-top:8px">📧 Your email is required — the password reset code is sent to this address.</div>'+
       (em?'':'<div class="msg show bad" style="margin-top:10px">No email on file. Click Edit and add your email so you can reset your password.</div>')+
     '</div>';
   $('pEdit').onclick=profileModal;
+  $('pPass').onclick=passwordModal;
+}
+
+/* Change my own password: current password + new password (at least 6 characters) */
+function passwordModal(){
+  const L=t=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+t+' <span class="req">*</span></label>';
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2500;padding:16px';
+  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:400px;width:100%;padding:18px">'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:4px">🔒 Change password</div>'+
+    L('Current password')+'<input id="cp_old" type="password" autocomplete="current-password">'+
+    L('New password')+'<input id="cp_new" type="password" autocomplete="new-password" placeholder="At least 6 characters">'+
+    L('Confirm new password')+'<input id="cp_new2" type="password" autocomplete="new-password">'+
+    '<label style="display:flex;align-items:center;gap:6px;font-weight:400;margin-top:8px"><input type="checkbox" id="cp_show" style="width:auto"> Show passwords</label>'+
+    '<div class="msg" id="cp_msg"></div>'+
+    '<div style="display:flex;gap:8px;margin-top:14px"><button class="btn-sm" id="cp_cancel" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button class="btn-sm" id="cp_save" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
+  document.body.appendChild(o);
+  const q=x=>o.querySelector(x), close=()=>o.remove();
+  const bad=t=>{const m=q('#cp_msg');m.className='msg show bad';m.textContent=t;};
+  q('#cp_cancel').onclick=close; o.addEventListener('click',e=>{if(e.target===o)close();});
+  q('#cp_show').onchange=function(){['#cp_old','#cp_new','#cp_new2'].forEach(s=>q(s).type=this.checked?'text':'password');};
+  ['#cp_old','#cp_new','#cp_new2'].forEach(s=>q(s).addEventListener('keydown',e=>{if(e.key==='Enter')q('#cp_save').click();}));
+  q('#cp_save').onclick=async function(){
+    const oldp=q('#cp_old').value, np=q('#cp_new').value, np2=q('#cp_new2').value;
+    if(!oldp) return bad('Enter your current password.');
+    if(np.length<6) return bad('New password must be at least 6 characters.');
+    if(np!==np2) return bad('The new passwords do not match.');
+    if(np===oldp) return bad('The new password must be different from the current one.');
+    this.disabled=true;
+    const email=(PROFILE&&PROFILE.email)||(ME&&ME.email);
+    const {error:ve}=await sb.auth.signInWithPassword({email,password:oldp});   // confirm it's really you
+    if(ve){ this.disabled=false; return bad('Current password is incorrect.'); }
+    const {error}=await sb.auth.updateUser({password:np});
+    this.disabled=false;
+    if(error) return bad(error.message);
+    close(); popup('Password changed. Use the new password next time you sign in.');
+  };
+  setTimeout(()=>q('#cp_old').focus(),50);
 }
 
 /* Edit-profile pop-up: change details, then Save or Cancel */
@@ -945,6 +984,43 @@ function comboBox(input,list,getOptions){
   });
   list.addEventListener('mousedown',e=>{ const el=e.target.closest('.combo-opt'); if(el){ e.preventDefault(); choose(+el.getAttribute('data-i')); } });
   input.addEventListener('blur',()=>setTimeout(()=>list.classList.remove('open'),120));
+}
+/* Call the admin-users Edge Function (admin only). Returns the JSON reply. */
+async function adminUsersCall(body){
+  if(DEMO){ const pw='Demo'+Math.random().toString(36).slice(2,8); return {ok:true,full_name:body.full_name,staff_id:body.staff_id||'A000',email:body.email||'demo@admin',password:pw}; }
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const r=await fetch(String(SUPABASE_URL).replace(/\/$/,'')+'/functions/v1/admin-users',{method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_ANON_KEY,'Authorization':'Bearer '+(session&&session.access_token||'')},
+      body:JSON.stringify(body)});
+    return await r.json();
+  }catch(e){ return {error:'Network error: '+e}; }
+}
+/* Copy text to the clipboard (with a fallback for older webviews) */
+async function copyText(t){
+  try{ await navigator.clipboard.writeText(t); return true; }catch(e){}
+  try{ const ta=document.createElement('textarea'); ta.value=t; ta.style.cssText='position:fixed;opacity:0'; document.body.appendChild(ta); ta.select(); const ok=document.execCommand('copy'); ta.remove(); return ok; }catch(e){ return false; }
+}
+/* Pop-up showing Staff ID + password once, with Copy buttons */
+function credBox(title,name,staffId,email,password,note){
+  const site=location.origin+location.pathname;
+  const all='Credit Card Hub sign-in\nName: '+(name||'')+'\nStaff ID: '+(staffId||'—')+'\nPassword: '+password+'\nSign in at: '+site;
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2700;padding:16px';
+  const row=(k,v,id)=>'<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><div style="width:84px;color:#6b7280;font-size:12.5px">'+k+'</div>'+
+    '<div style="flex:1;font-family:ui-monospace,Consolas,monospace;font-size:16px;font-weight:700;background:#f3f4f6;border-radius:8px;padding:8px 10px;color:#111;word-break:break-all">'+escHtml(v||'—')+'</div>'+
+    (id?'<button class="btn-xs" style="background:#6b7280" data-copy="'+id+'">Copy</button>':'')+'</div>';
+  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:440px;width:100%;padding:18px">'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:2px">✅ '+escHtml(title)+'</div>'+
+    '<div style="color:#6b7280;font-size:13px;margin-bottom:6px">'+escHtml(name||'')+(email?' · '+escHtml(email):'')+'</div>'+
+    row('Staff ID',staffId,'sid')+row('Password',password,'pw')+
+    '<div style="background:rgba(217,119,6,.12);color:#b45309;border-radius:8px;padding:8px 10px;font-size:12.5px;margin-top:10px">⚠️ This password is shown only once. '+escHtml(note||'')+'</div>'+
+    '<div style="display:flex;gap:8px;margin-top:14px"><button class="btn-sm" id="cb_all" style="flex:1;background:var(--ok);padding:10px">📋 Copy all</button><button class="btn-sm" id="cb_close" style="flex:1;background:var(--accent);padding:10px">Done</button></div></div>';
+  document.body.appendChild(o);
+  const flash=(btn,ok)=>{const t=btn.textContent;btn.textContent=ok?'Copied ✓':'Copy failed';setTimeout(()=>btn.textContent=t,1400);};
+  o.querySelectorAll('[data-copy]').forEach(btn=>btn.onclick=async()=>flash(btn,await copyText(btn.getAttribute('data-copy')==='pw'?password:String(staffId||''))));
+  o.querySelector('#cb_all').onclick=async function(){flash(this,await copyText(all));};
+  o.querySelector('#cb_close').onclick=()=>o.remove();
 }
 /* Yes/No confirmation box (used before Remove / Deactivate) */
 function confirmBox(msg,yesLabel,onYes){
