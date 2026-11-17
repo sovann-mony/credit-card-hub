@@ -283,11 +283,14 @@ $('authBtn').onclick = async ()=>{
     if(!/^\d{6}$/.test(code)){ setMsg('authMsg','bad','Enter the 6-digit code from your email.'); return; }
     if(!np||np.length<6){ setMsg('authMsg','bad','New password must be at least 6 characters.'); return; }
     $('authBtn').disabled=true;
+    RESET_IN_PROGRESS=true;
     const { error } = await sb.auth.verifyOtp({ email:RESET_EMAIL, token:code, type:'email' });
-    if(error){ $('authBtn').disabled=false; setMsg('authMsg','bad', /expired|invalid/i.test(error.message)?'That code is wrong or expired. Request a new one.':error.message); return; }
+    if(error){ RESET_IN_PROGRESS=false; $('authBtn').disabled=false; setMsg('authMsg','bad', /expired|invalid/i.test(error.message)?'That code is wrong or expired. Request a new one.':error.message); return; }
     const { error:ue } = await sb.auth.updateUser({ password:np });
+    RESET_IN_PROGRESS=false;
     $('authBtn').disabled=false;
-    if(ue){ setMsg('authMsg','bad','Code accepted, but setting the password failed: '+ue.message); return; }
+    if(ue){ setMsg('authMsg','bad','Code accepted, but setting the password failed: '+ue.message); if(PROFILE&&PROFILE.must_change_password) forcePasswordModal(); return; }
+    await clearMustChange();
     try{ localStorage.setItem('cardhub_login', RESET_EMAIL); }catch(e){}
     setMsg('authMsg','ok','Password updated — signing you in…');
     return;
@@ -335,7 +338,7 @@ async function boot(){
 /* Supabase re-fires SIGNED_IN / TOKEN_REFRESHED when you come back to the tab.
    Only rebuild the app when the signed-in user actually changes, so the current
    page (and anything typed into it) is kept. */
-let CUR_UID=null;
+let CUR_UID=null, RESET_IN_PROGRESS=false;
 async function handleSession(session){
   if(!session){ CUR_UID=null; showPublic(); return; }
   if(CUR_UID===session.user.id){ ME=session.user; return; }
@@ -349,6 +352,8 @@ async function handleSession(session){
   $('urole').textContent = PROFILE.role||'';
   $('tbAvatar').src = PROFILE.avatar_url||AV_PH;
   setupNav();
+  // first sign-in with an admin-generated password (new user or after a reset)
+  if(PROFILE.must_change_password && !RESET_IN_PROGRESS) forcePasswordModal();
 }
 function setupNav(){
   const role = PROFILE.role;
@@ -864,6 +869,46 @@ function viewProfile(){
   $('pPass').onclick=passwordModal;
 }
 
+/* Mark "must change password" as done for the signed-in user */
+async function clearMustChange(){
+  if(!ME) return;
+  try{ await sb.from('profiles').update({must_change_password:false}).eq('id',ME.id); }catch(e){}
+  if(PROFILE) PROFILE.must_change_password=false;
+}
+/* Required pop-up after signing in with an admin-generated password.
+   It cannot be closed: the user must set a new password (or sign out). */
+function forcePasswordModal(){
+  if($('fpBox')) return;
+  const L=t=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+t+' <span class="req">*</span></label>';
+  const o=document.createElement('div'); o.id='fpBox';
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,30,50,.75);display:flex;align-items:center;justify-content:center;z-index:3000;padding:16px';
+  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:400px;width:100%;padding:20px">'+
+    '<div style="text-align:center;font-size:34px;line-height:1">🔐</div>'+
+    '<div style="font-weight:700;font-size:17px;text-align:center;margin:6px 0 2px">Create your new password</div>'+
+    '<div style="color:#6b7280;font-size:13px;text-align:center;margin-bottom:6px">Welcome'+(PROFILE&&PROFILE.full_name?', '+escHtml(PROFILE.full_name):'')+'! You signed in with a temporary password. Please set your own password to continue.</div>'+
+    L('New password')+'<input id="fp_new" type="password" autocomplete="new-password" placeholder="At least 6 characters">'+
+    L('Confirm new password')+'<input id="fp_new2" type="password" autocomplete="new-password" placeholder="Type it again">'+
+    '<label style="display:flex;align-items:center;gap:6px;font-weight:400;margin-top:8px"><input type="checkbox" id="fp_show" style="width:auto"> Show passwords</label>'+
+    '<div class="msg" id="fp_msg"></div>'+
+    '<button class="primary" id="fp_save" style="margin-top:14px">Save new password</button>'+
+    '<div style="text-align:center;margin-top:10px"><a id="fp_out" style="color:#6b7280;font-size:12.5px;cursor:pointer">Sign out</a></div></div>';
+  document.body.appendChild(o);
+  const q=x=>o.querySelector(x), bad=t=>{const m=q('#fp_msg');m.className='msg show bad';m.textContent=t;};
+  q('#fp_show').onchange=function(){['#fp_new','#fp_new2'].forEach(x=>q(x).type=this.checked?'text':'password');};
+  ['#fp_new','#fp_new2'].forEach(x=>q(x).addEventListener('keydown',e=>{if(e.key==='Enter')q('#fp_save').click();}));
+  q('#fp_out').onclick=async()=>{ o.remove(); await sb.auth.signOut(); };
+  q('#fp_save').onclick=async function(){
+    const np=q('#fp_new').value, np2=q('#fp_new2').value;
+    if(np.length<6) return bad('New password must be at least 6 characters.');
+    if(np!==np2) return bad('The two passwords do not match.');
+    this.disabled=true;
+    const {error}=await sb.auth.updateUser({password:np});
+    if(error){ this.disabled=false; return bad(/different|same/i.test(error.message)?'Please choose a password different from the temporary one.':error.message); }
+    await clearMustChange();
+    o.remove(); popup('Your new password is saved. Use it next time you sign in.');
+  };
+  setTimeout(()=>q('#fp_new').focus(),50);
+}
 /* Change my own password: current password + new password (at least 6 characters) */
 function passwordModal(){
   const L=t=>'<label style="display:block;font-size:12.5px;color:#374151;font-weight:600;margin:10px 0 4px">'+t+' <span class="req">*</span></label>';
@@ -896,6 +941,7 @@ function passwordModal(){
     const {error}=await sb.auth.updateUser({password:np});
     this.disabled=false;
     if(error) return bad(error.message);
+    await clearMustChange();
     close(); popup('Password changed. Use the new password next time you sign in.');
   };
   setTimeout(()=>q('#cp_old').focus(),50);
