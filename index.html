@@ -120,6 +120,28 @@
   .htable.act.wrap td:first-child,.htable.act.wrap td:last-child{min-width:0;white-space:nowrap}
   .setTab{padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--text);font-weight:600;font-size:12.5px;cursor:pointer}
   .setTab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  /* ---- premium page styling ---- */
+  .page-hero{position:relative;overflow:hidden;border-radius:14px;padding:16px 20px;margin-bottom:14px;color:#fff;
+    background:linear-gradient(120deg,#00324f 0%,#004973 40%,var(--h2,#0a7bb5) 100%);box-shadow:0 6px 18px rgba(0,50,80,.22)}
+  .page-hero:before,.page-hero:after{content:"";position:absolute;border-radius:50%;background:rgba(255,255,255,.08)}
+  .page-hero:before{width:200px;height:200px;right:-50px;top:-90px}.page-hero:after{width:120px;height:120px;right:110px;bottom:-75px;background:rgba(250,178,25,.14)}
+  .page-hero h2{margin:0;color:#fff;font-size:21px;position:relative;display:flex;align-items:center;gap:10px}
+  .page-hero h2 .pic{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.16);display:inline-flex;align-items:center;justify-content:center;font-size:19px}
+  .page-hero .sub{opacity:.85;font-size:12.5px;margin-top:5px;position:relative}
+  #main .card{background:var(--bg);border:1px solid var(--line);box-shadow:0 2px 10px rgba(16,24,40,.05)}
+  #main .dash-hero .card{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);box-shadow:none}
+  body.dark #main .card{background:var(--card);box-shadow:none}
+  body.dark #main .dash-hero .card{background:rgba(255,255,255,.08)}
+  .htable th{text-transform:uppercase;letter-spacing:.4px;font-size:11px;color:var(--accent)!important;background:color-mix(in srgb,var(--accent) 8%,var(--bg))!important;border-bottom:2px solid color-mix(in srgb,var(--accent) 25%,transparent)}
+  .htable tbody tr:hover td{background:color-mix(in srgb,var(--accent) 5%,var(--bg))}
+  .htable tbody tr:nth-child(even) td{background-color:color-mix(in srgb,var(--card) 45%,var(--bg))}
+  .htable tbody tr:nth-child(even):hover td{background:color-mix(in srgb,var(--accent) 5%,var(--bg))}
+  .setTab{transition:all .15s;box-shadow:0 1px 3px rgba(16,24,40,.06)}
+  .setTab:hover{border-color:var(--accent);color:var(--accent)}
+  .setTab.active{background:linear-gradient(120deg,#004973,#0a7bb5);border-color:transparent;color:#fff;box-shadow:0 3px 10px rgba(0,73,115,.3)}
+  body.dark .setTab{background:var(--card)}
+  .btn-sm,.btn-xs{transition:transform .12s,box-shadow .12s,filter .12s;box-shadow:0 1px 3px rgba(16,24,40,.12)}
+  .btn-sm:hover,.btn-xs:hover{filter:brightness(1.07);transform:translateY(-1px);box-shadow:0 4px 10px rgba(16,24,40,.16)}
   .banner{background:rgba(217,119,6,.12);color:var(--warn);padding:8px 14px;font-size:12px;text-align:center}
   /* auth screen */
   #auth{max-width:380px;margin:6vh auto;padding:20px}
@@ -405,9 +427,15 @@ function setupNav(){
   });
   if(first) go(first.getAttribute('data-view'));
 }
+const PAGE_HERO={submit:['📝','#0f9d63','Record a card delivery — one at a time or by file'],history:['🕑','#6a52d9','Every delivery record, with filters and Excel export'],
+  cards:['💳','#0e9aa7','Cards created in TWCMS and their latest delivery status'],profile:['👤','#d9822b','Your account details'],settings:['⚙️','#64748b','Users, branches, units and card statuses']};
+function pageHero(view){ const cfg=PAGE_HERO[view], m=$('main'); if(!cfg||!m) return; const h=m.querySelector(':scope > h2'); if(!h||h.closest('.page-hero')) return;
+  const box=document.createElement('div'); box.className='page-hero'; box.style.setProperty('--h2',cfg[1]);
+  box.innerHTML='<h2><span class="pic">'+cfg[0]+'</span>'+escHtml(h.textContent)+'</h2><div class="sub">'+cfg[2]+'</div>'; h.replaceWith(box); }
 function go(view){
   document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.getAttribute('data-view')===view));
-  ({submit:viewSubmit,history:viewHistory,cards:viewCards,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
+  const r=({submit:viewSubmit,history:viewHistory,cards:viewCards,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
+  pageHero(view); if(r&&r.then) r.then(()=>pageHero(view)).catch(()=>{});
 }
 
 /* ---------- SUBMIT ---------- */
