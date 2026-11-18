@@ -400,7 +400,7 @@ function submitSingle(host){
   host.innerHTML =
     lbl(F.holder)+'<input id="f_holder" autocomplete="off" placeholder="Type to search card holder…"><div id="hResults"></div><div class="lookup" id="lookup"></div>'+
     lbl(F.branch)+'<div class="combo"><input id="f_branch" inputmode="numeric" autocomplete="off" placeholder="Type to search branch code (or enter a new one)"><div class="combo-list" id="f_branch_list"></div></div>'+
-    lbl(F.dname)+'<input id="f_dname">'+
+    lbl(F.dname)+'<input id="f_dname" placeholder="CAPITAL LETTERS ONLY">'+
     lbl(F.staff)+'<input id="f_staff" inputmode="numeric" placeholder="Numbers only">'+
     lbl(F.unit)+'<select id="f_unit"><option value="">Select…</option>'+opts(OPTIONS.unit)+'<option value="__other">Other…</option></select>'+
       '<input id="f_unit_other" placeholder="Enter unit / team" style="display:none;margin-top:6px">'+
@@ -445,6 +445,7 @@ function submitSingle(host){
     },300);
   });
   comboBox($('f_branch'),$('f_branch_list'),()=>OPTIONS.branch);
+  capsOnly($('f_dname'));
   $('f_unit').onchange=function(){$('f_unit_other').style.display=this.value==='__other'?'block':'none';};
   $('subBtn').onclick=async function(){
     if(!selectedCard){ popup('Card holder name does not match the existing data. Please pick a valid card holder from the list.'); return; }
@@ -459,6 +460,8 @@ function submitSingle(host){
     for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'])
       if(!payload[k]){ popup('Please fill in all required information before submitting.'); return; }
     if(!/^\d+$/.test(payload.branch_code)){ popup('Branch Code must be a number.'); return; }
+    payload.delivery_name=capsName(payload.delivery_name).trim();
+    if(!NAME_CAPS_RE.test(payload.delivery_name)){ popup('Delivery Name must be in CAPITAL letters only (A–Z and spaces).'); return; }
     if(!/^\d+$/.test(payload.staff_id)){ popup('Staff ID must be a number.'); return; }
     if(selectedCard.create_date && payload.delivery_date && payload.delivery_date < selectedCard.create_date){
       popup('Delivery Date cannot be earlier than the card\'s create date ('+fmtD(selectedCard.create_date)+').'); return; }
@@ -485,7 +488,7 @@ function submitSingle(host){
 /* ---------- HISTORY ---------- */
 function submitUploader(host){
   host.innerHTML=
-    '<p class="hint">Upload a CSV or Excel file — each row becomes one delivery record. Required columns: <b>cardholder_name</b> (must match Card Data), <b>branch_code</b> (number), <b>delivery_name</b>, <b>staff_id</b> (number), <b>delivery_unit</b>, <b>delivery_date</b> (DD-MMM-YY e.g. 17-Nov-26, or an Excel date; not before the card create date), <b>delivery_card_status</b>. Optional: <b>remark</b> (required unless status is Delivered), <b>reason_for_reissue</b> (to pick a specific card when a name has more than one).</p>'+
+    '<p class="hint">Upload a CSV or Excel file — each row becomes one delivery record. Required columns: <b>cardholder_name</b> (must match Card Data), <b>branch_code</b> (number), <b>delivery_name</b> (CAPITAL letters; lowercase is converted), <b>staff_id</b> (number), <b>delivery_unit</b>, <b>delivery_date</b> (DD-MMM-YY e.g. 17-Nov-26, or an Excel date; not before the card create date), <b>delivery_card_status</b>. Optional: <b>remark</b> (required unless status is Delivered), <b>reason_for_reissue</b> (to pick a specific card when a name has more than one).</p>'+
     '<input type="file" id="s_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
     '<div id="sPrev"></div>'+
     '<button class="primary" id="sUpBtn" disabled>Validate &amp; submit</button>'+
@@ -545,6 +548,8 @@ function submitUploader(host){
           'Earlier submission: '+(lsub.delivery_card_status||'—')+' · by '+(lsub.delivery_name||'—')+' · delivery date '+(fmtD(lsub.delivery_date)||'—')+' · submitted '+fmtD(lsub.created_at)); continue; }
       const miss=reqd.filter(k=>!p[k]); if(miss.length){ F('Missing: '+miss.join(', ')); continue; }
       if(!/^\d+$/.test(String(p.branch_code))){ F('Branch Code must be a number'); continue; }
+      p.delivery_name=String(p.delivery_name).trim().replace(/\s+/g,' ').toUpperCase();
+      if(!NAME_CAPS_RE.test(p.delivery_name)){ F('Delivery Name "'+p.delivery_name+'" must be CAPITAL letters only (A–Z and spaces)'); continue; }
       if(!/^\d+$/.test(String(p.staff_id))){ F('Staff ID must be a number'); continue; }
       if(!isISO(p.delivery_date)){ F('Delivery Date "'+p.delivery_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)'); continue; }
       if(card.create_date && p.delivery_date < card.create_date){ F('Delivery Date earlier than card create date ('+fmtD(card.create_date)+')'); continue; }
@@ -609,7 +614,7 @@ async function viewHistory(){
       const s=ALL.find(x=>String(x.id)===b.getAttribute('data-hedit')); if(!s)return;
       editModal('Edit delivery record — '+(s.card_holder_name||''),[
         {key:'branch_code',label:'Branch Code (numbers only)',value:s.branch_code},
-        {key:'delivery_name',label:'Delivery Name',value:s.delivery_name},
+        {key:'delivery_name',label:'Delivery Name (CAPITAL letters only)',value:s.delivery_name,caps:true},
         {key:'staff_id',label:'Staff ID (numbers only)',value:s.staff_id},
         {key:'delivery_unit',label:'Delivery by (Unit)',value:s.delivery_unit,type:'select',options:OPTIONS.unit},
         {key:'delivery_date',label:'Delivery Date',value:s.delivery_date,type:'date'},
@@ -618,6 +623,8 @@ async function viewHistory(){
       ],async v=>{
         for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status']) if(!v[k]) return 'Please fill in all required information.';
         if(!/^\d+$/.test(v.branch_code)) return 'Branch Code must be a number.';
+        v.delivery_name=capsName(v.delivery_name).trim();
+        if(!NAME_CAPS_RE.test(v.delivery_name)) return 'Delivery Name must be in CAPITAL letters only (A–Z and spaces).';
         if(!/^\d+$/.test(v.staff_id)) return 'Staff ID must be a number.';
         if(v.delivery_card_status.toLowerCase()!=='delivered' && !v.remark) return 'Remark is required when the status is not "Delivered".';
         v.remark=v.remark||null;
@@ -1185,6 +1192,16 @@ function submittedBox(p){
   o.addEventListener('click',e=>{if(e.target===o)close();});
   setTimeout(()=>o.querySelector('#sb_ok').focus(),50);
 }
+/* Delivery Name: CAPITAL letters only (A–Z and single spaces). Typing is converted to capitals;
+   digits and symbols are removed as you type. */
+const NAME_CAPS_RE=/^[A-Z]+( [A-Z]+)*$/;
+const capsName=v=>String(v==null?'':v).toUpperCase().replace(/[^A-Z ]/g,'').replace(/ {2,}/g,' ');
+function capsOnly(inp){
+  if(!inp||inp.dataset.caps) return; inp.dataset.caps='1';
+  inp.style.textTransform='uppercase'; inp.setAttribute('autocapitalize','characters'); inp.setAttribute('autocomplete','off');
+  if(!inp.placeholder) inp.placeholder='CAPITAL LETTERS ONLY';
+  inp.addEventListener('input',()=>{ const v=inp.value, nv=capsName(v); if(v!==nv){ const pos=Math.max(0,(inp.selectionStart||nv.length)-(v.length-nv.length)); inp.value=nv; try{inp.setSelectionRange(pos,pos);}catch(e){} } });
+}
 /* Yes/No confirmation box (used before Remove / Deactivate) */
 function confirmBox(msg,yesLabel,onYes){
   const o=document.createElement('div');
@@ -1254,6 +1271,7 @@ function editModal(title,fields,onSave){
       (f.hint?'<div class="hint">'+escHtml(f.hint)+'</div>':'')).join('')+
     '<div style="display:flex;gap:8px;margin-top:16px"><button id="em_cancel" class="btn-sm" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button id="em_save" class="btn-sm" style="flex:1;background:var(--accent);padding:10px">Save</button></div></div>';
   document.body.appendChild(o);
+  fields.forEach((f,i)=>{ if(f.caps) capsOnly(o.querySelector('#em_'+i)); });
   const close=()=>o.remove();
   o.addEventListener('click',e=>{if(e.target===o)close();});
   o.querySelector('#em_cancel').onclick=close;
