@@ -116,6 +116,7 @@
   .htable.act td{max-width:240px;overflow:hidden;text-overflow:ellipsis}
   .htable.act th:last-child,.htable.act td:last-child{position:sticky;right:0;z-index:1;background:var(--bg);max-width:none;overflow:visible;box-shadow:-8px 0 8px -8px rgba(0,0,0,.25)}
   .htable.act th:last-child{background:var(--card)}
+  .htable.act td:has(.pill){max-width:none;overflow:visible}
   .htable.act.wrap td{white-space:normal;overflow:visible;text-overflow:clip;min-width:70px;max-width:280px;word-break:break-word}
   .htable.act.wrap td:first-child,.htable.act.wrap td:last-child{min-width:0;white-space:nowrap}
   .setTab{padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--text);font-weight:600;font-size:12.5px;cursor:pointer}
@@ -693,7 +694,7 @@ async function viewHistory(){
     $('hist').querySelectorAll('[data-hedit]').forEach(b=>b.onclick=()=>{
       const s=ALL.find(x=>String(x.id)===b.getAttribute('data-hedit')); if(!s)return;
       editModal('Edit delivery record — '+(s.card_holder_name||''),[
-        {key:'created_at',label:'Submission Date',value:localISO(s.created_at),type:'date',hint:'The day this record was submitted.'},
+      ].concat(IS_ADMIN()?[{key:'created_at',label:'Submission Date',value:localISO(s.created_at),type:'date',hint:'The day this record was submitted (admin only).'}]:[]).concat([
         {key:'branch_code',label:'Branch Code (numbers only)',value:s.branch_code},
         {key:'delivery_name',label:'Delivery Name (CAPITAL letters only)',value:s.delivery_name,caps:true},
         {key:'staff_id',label:'Staff ID (numbers only)',value:s.staff_id},
@@ -701,12 +702,13 @@ async function viewHistory(){
         {key:'delivery_card_status',label:'Credit Card Status',value:s.delivery_card_status,type:'select',options:OPTIONS.cardStatus},
         {key:'delivery_date',label:'Delivery Date',value:s.delivery_date,type:'date',hint:'Optional when the status is On Hold.'},
         {key:'remark',label:'Remark',value:s.remark,type:'textarea',hint:'Required when the status is not "Delivered".'}
-      ],async v=>{
+      ]),async v=>{
         for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status']){ if(k==='delivery_date'&&isHold(v.delivery_card_status)) continue; if(!v[k]) return 'Please fill in all required information.'; }
         if(!v.delivery_date) v.delivery_date=null;
-        if(!v.created_at) return 'Submission Date is required.';
-        if(v.created_at>localISO(new Date())) return 'Submission Date cannot be in the future.';
-        if(v.created_at===localISO(s.created_at)) delete v.created_at;
+        if(!IS_ADMIN()) delete v.created_at;
+        else if(!v.created_at) return 'Submission Date is required.';
+        if(v.created_at && v.created_at>localISO(new Date())) return 'Submission Date cannot be in the future.';
+        if(!v.created_at || v.created_at===localISO(s.created_at)) delete v.created_at;
         else { const o=new Date(s.created_at), m=v.created_at.match(/^(\d{4})-(\d{2})-(\d{2})$/);
           if(!m) return 'Submission Date is not a valid date.';
           const nd=isNaN(o)?new Date(+m[1],+m[2]-1,+m[3],12):new Date(+m[1],+m[2]-1,+m[3],o.getHours(),o.getMinutes(),o.getSeconds());
@@ -997,6 +999,7 @@ async function settingsUsers(){
     ['Submit delivery record (single / upload file)',Y,Y],
     ['History — view, filter, search, export',Y,Y],
     ['History — edit a delivery record',Y,Y],
+    ['History — change the Submission Date',N,Y],
     ['History — remove a delivery record',N,Y],
     ['Card Data — view, add, upload, export',Y,Y],
     ['Card Data — edit a card',Y,Y],
