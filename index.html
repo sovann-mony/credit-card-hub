@@ -224,6 +224,7 @@
         <a data-view="submit"    data-roles="officer,admin"><span class="ic">📝</span><span class="lb">Submit</span></a>
         <a data-view="history"   data-roles="officer,admin"><span class="ic">🕑</span><span class="lb">History</span></a>
         <a data-view="cards"     data-roles="officer,admin"><span class="ic">💳</span><span class="lb">Card Data</span></a>
+        <a data-view="fees"      data-roles="officer,admin"><span class="ic">💰</span><span class="lb">Interest Rate</span></a>
         <a data-view="dashboard" data-roles="officer,admin"><span class="ic">📊</span><span class="lb">Dashboard</span></a>
         <a data-view="profile"   data-roles="officer,admin"><span class="ic">👤</span><span class="lb">Profile</span></a>
         <a data-view="settings"  data-roles="admin"><span class="ic">⚙️</span><span class="lb">Settings</span></a>
@@ -435,13 +436,13 @@ function setupNav(){
   if(first) go(first.getAttribute('data-view'));
 }
 const PAGE_HERO={submit:['📝','#0f9d63','Record a card delivery — one at a time or by file'],history:['🕑','#6a52d9','Every delivery record, with filters and Excel export'],
-  cards:['💳','#0e9aa7','Cards created in TWCMS and their latest delivery status'],profile:['👤','#d9822b','Your account details'],settings:['⚙️','#64748b','Users, branches, units and card statuses']};
+  cards:['💳','#0e9aa7','Cards created in TWCMS and their latest delivery status'],fees:['💰','#2a78d6','Monthly Interest Fee & Late Payment Fee (USD)'],profile:['👤','#d9822b','Your account details'],settings:['⚙️','#64748b','Users, branches, units and card statuses']};
 function pageHero(view,hostId){ const cfg=PAGE_HERO[view], m=$(hostId||'main'); if(!cfg||!m) return; const h=m.querySelector(':scope > h2'); if(!h||h.closest('.page-hero')) return;
   const box=document.createElement('div'); box.className='page-hero'; box.style.setProperty('--h2',cfg[1]);
   box.innerHTML='<h2><span class="pic">'+cfg[0]+'</span>'+escHtml(h.textContent)+'</h2><div class="sub">'+(hostId==='publicMain'?'Fill in the delivery details below, then tap Submit':cfg[2])+'</div>'; h.replaceWith(box); }
 function go(view){
   document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.getAttribute('data-view')===view));
-  const r=({submit:viewSubmit,history:viewHistory,cards:viewCards,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
+  const r=({submit:viewSubmit,history:viewHistory,cards:viewCards,fees:viewFees,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
   pageHero(view); if(r&&r.then) r.then(()=>pageHero(view)).catch(()=>{});
 }
 
@@ -741,6 +742,86 @@ async function viewHistory(){
   load();
 }
 
+/* ---------- INTEREST RATE (monthly fees) ---------- */
+const money=v=>'$'+Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const money0=v=>'$'+Math.round(Number(v||0)).toLocaleString('en-US');
+const MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const monLbl=d=>{ const m=String(d||'').match(/^(\d{4})-(\d{2})/); return m?MON3[+m[2]-1]+'-'+m[1].slice(2):''; };
+const parseMoney=v=>{ const t=String(v==null?'':v).replace(/[$,\s]/g,''); if(t==='') return null; if(!/^\d+(\.\d{1,2})?$/.test(t)) return NaN; return Number(t); };
+async function viewFees(){
+  const admin=IS_ADMIN();
+  const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
+  const col=(l,h,extra)=>'<div style="display:flex;flex-direction:column'+(extra||'')+'">'+lab(l)+h+'</div>';
+  $('main').innerHTML='<h2>Interest Rate</h2>'+
+    '<div class="card" style="padding:14px;margin-bottom:12px"><div style="font-weight:700;margin-bottom:8px">Add or update a month</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
+        col('Month *','<input type="month" id="fMonth" style="width:170px">')+
+        col('Interest Fee (USD) *','<input id="fInt" inputmode="decimal" placeholder="0.00" style="width:170px">')+
+        col('Late Payment Fee (USD) *','<input id="fLate" inputmode="decimal" placeholder="0.00" style="width:170px">')+
+        col('Remark','<input id="fRemark" placeholder="Optional">',';flex:1;min-width:180px')+
+        '<button class="btn-sm" id="fSave" style="background:var(--accent);padding:9px 18px">Save</button></div>'+
+      '<div class="hint" style="margin:6px 0 0">Amounts in US dollars. If the month is already saved, its fees are updated.</div></div>'+
+    '<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
+      col('Year','<select id="fYear" style="width:150px"><option value="">All years</option></select>')+
+      '<button class="btn-sm" id="fExport" style="background:var(--accent);padding:9px 14px">Export Excel</button>'+
+      '<div class="hint" id="fSum" style="margin:0 0 0 auto;align-self:center"></div></div>'+
+    '<div id="feeList"><div class="empty">Loading…</div></div>';
+  let ROWS=[];
+  const cur=()=>{ const y=$('fYear').value; return ROWS.filter(r=>!y||String(r.month).slice(0,4)===y); };
+  function render(){
+    const rows=cur(); const ti=rows.reduce((a,r)=>a+Number(r.interest_fee||0),0), tl=rows.reduce((a,r)=>a+Number(r.late_fee||0),0);
+    $('fSum').innerHTML=rows.length?'Interest <b>'+money(ti)+'</b> · Late payment <b>'+money(tl)+'</b> · Total <b>'+money(ti+tl)+'</b>':'';
+    if(!rows.length){ $('feeList').innerHTML='<div class="empty">No months saved yet.</div>'; return; }
+    $('feeList').innerHTML='<div style="overflow-x:auto"><table class="htable act"><thead><tr><th>Month</th><th style="text-align:right">Interest Fee</th><th style="text-align:right">Late Payment Fee</th><th style="text-align:right">Total</th><th>Remark</th><th>Last updated</th><th>Actions</th></tr></thead><tbody>'+
+      rows.map(r=>'<tr><td><b>'+monLbl(r.month)+'</b></td><td style="text-align:right">'+money(r.interest_fee)+'</td><td style="text-align:right">'+money(r.late_fee)+'</td><td style="text-align:right"><b>'+money(Number(r.interest_fee||0)+Number(r.late_fee||0))+'</b></td>'+
+        '<td>'+escHtml(r.remark||'')+'</td><td>'+escHtml(fmtD(r.updated_at)||'')+'</td>'+
+        '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-fedit="'+r.id+'">Edit</button>'+(admin?' <button class="btn-xs" style="background:var(--danger)" data-fdel="'+r.id+'">Remove</button>':'')+'</td></tr>').join('')+
+      '</tbody></table></div>';
+    tipCells($('feeList'));
+    $('feeList').querySelectorAll('[data-fedit]').forEach(b=>b.onclick=()=>{ const r=ROWS.find(x=>String(x.id)===b.getAttribute('data-fedit')); if(!r) return;
+      editModal('Edit fees — '+monLbl(r.month),[
+        {key:'interest_fee',label:'Interest Fee (USD)',value:String(r.interest_fee??'')},
+        {key:'late_fee',label:'Late Payment Fee (USD)',value:String(r.late_fee??'')},
+        {key:'remark',label:'Remark',value:r.remark,type:'textarea'}],async v=>{
+          const i=parseMoney(v.interest_fee), l=parseMoney(v.late_fee);
+          if(i==null||l==null) return 'Please enter both fees (use 0 if none).';
+          if(isNaN(i)||isNaN(l)) return 'Fees must be numbers with up to 2 decimals, e.g. 1250.50';
+          const {error}=await sb.from('fee_monthly').update({interest_fee:i,late_fee:l,remark:v.remark||null}).eq('id',r.id);
+          if(error) return error.message; popup('Fees for '+monLbl(r.month)+' updated.'); load(); }); });
+    $('feeList').querySelectorAll('[data-fdel]').forEach(b=>b.onclick=()=>{ const r=ROWS.find(x=>String(x.id)===b.getAttribute('data-fdel')); if(!r) return;
+      confirmBox('Remove the fees for '+monLbl(r.month)+'? This cannot be undone.','Remove',async()=>{
+        const {error}=await sb.from('fee_monthly').delete().eq('id',r.id); if(error) popup(error.message); else load(); }); });
+  }
+  async function load(){
+    const {data,error}=await fetchAll('fee_monthly','id,month,interest_fee,late_fee,remark,updated_at');
+    if(error){ $('feeList').innerHTML='<div class="empty">'+escHtml(/fee_monthly|does not exist|schema cache/i.test(error.message)?'The fee table is not set up yet — run supabase_migration_fees.sql in Supabase.':error.message)+'</div>'; return; }
+    ROWS=(data||[]).slice().sort((a,b)=>String(b.month).localeCompare(String(a.month)));
+    const sel=$('fYear'), keep=sel.value, ys=[...new Set(ROWS.map(r=>String(r.month).slice(0,4)))].sort().reverse();
+    sel.innerHTML='<option value="">All years</option>'+ys.map(y=>'<option'+(y===keep?' selected':'')+'>'+y+'</option>').join('');
+    render();
+  }
+  $('fYear').onchange=render;
+  ['fInt','fLate','fRemark'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')$('fSave').click();}));
+  $('fSave').onclick=async function(){
+    const m=$('fMonth').value; if(!/^\d{4}-\d{2}$/.test(m)) return popup('Please choose the month.');
+    const i=parseMoney($('fInt').value), l=parseMoney($('fLate').value);
+    if(i==null||l==null) return popup('Please enter both fees (use 0 if none).');
+    if(isNaN(i)||isNaN(l)) return popup('Fees must be numbers with up to 2 decimals, e.g. 1250.50');
+    const month=m+'-01', ex=ROWS.find(r=>String(r.month).slice(0,10)===month), payload={interest_fee:i,late_fee:l,remark:$('fRemark').value.trim()||null};
+    const doSave=async()=>{ this.disabled=true;
+      const {error}=ex?await sb.from('fee_monthly').update(payload).eq('id',ex.id):await sb.from('fee_monthly').insert(Object.assign({month},payload));
+      this.disabled=false;
+      if(error) return popup(/duplicate|unique/i.test(error.message)?'That month is already saved — refresh and use Edit.':error.message);
+      popup('Fees for '+monLbl(month)+' '+(ex?'updated':'saved')+'.'); ['fInt','fLate','fRemark'].forEach(id=>$(id).value=''); load(); };
+    if(ex) confirmBox(monLbl(month)+' is already saved ('+money(ex.interest_fee)+' interest, '+money(ex.late_fee)+' late). Replace it with '+money(i)+' and '+money(l)+'?','Update',doSave);
+    else doSave();
+  };
+  $('fExport').onclick=()=>{ const rows=cur(); if(!rows.length) return popup('Nothing to export.');
+    exportXlsx('interest_and_late_fees.xlsx',['Month','Interest Fee (USD)','Late Payment Fee (USD)','Total (USD)','Remark'],
+      rows.map(r=>[monLbl(r.month),Number(r.interest_fee||0),Number(r.late_fee||0),Number(r.interest_fee||0)+Number(r.late_fee||0),r.remark||''])); };
+  load();
+}
+
 /* ---------- DASHBOARD ---------- */
 /* ---------- DASHBOARD ---------- */
 /* Charts: Chart.js (loaded on demand). Colours follow the data-viz palette:
@@ -791,7 +872,8 @@ async function dashLoad(){
   const [c,s]=await Promise.all([fetchAll('merchant_card_detail','id,cardholder_name,create_date,reason_for_reissue'),
     fetchAll('submissions','id,card_ref,delivery_card_status,delivery_name,staff_id,branch_code,delivery_unit,delivery_date,created_at')]);
   if(c.error||s.error){ $('dKpi').innerHTML='<div class="empty">'+escHtml((c.error||s.error).message)+'</div>'; return; }
-  DASH.state={cards:c.data||[],subs:s.data||[],range:dashRange()};
+  const fz=await fetchAll('fee_monthly','id,month,interest_fee,late_fee');
+  DASH.state={cards:c.data||[],subs:s.data||[],fees:fz.error?null:(fz.data||[]),range:dashRange()};
   dashRender();
 }
 function dashRender(){
@@ -826,11 +908,12 @@ function dashRender(){
     tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
 
   // ---------- layout ----------
-  const DC={c0:P.s2,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
+  const DC={c0:P.s2,f1:P.s1,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
   const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   $('dGrid').innerHTML=
     box('c0','Cards created vs Delivered','Created = cards by create month · Delivered = records with status Delivered, by delivery month',true)+
+    box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page',true)+
     box('c1','Delivery status','Cards created in the period, by latest delivery status')+
     box('c2','Pending cards by age','Days since the card was created (not yet delivered)')+
     box('c3','Deliveries over time','Records with status Delivered, by delivery date',true)+
@@ -879,6 +962,44 @@ function dashRender(){
         options:{maintainAspectRatio:false,layout:{padding:{top:18}},interaction:{mode:'index',intersect:false},
           scales:{x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
           plugins:{legend:{...legend,position:'top',labels:{...legend.labels,sort:(a,b)=>a.datasetIndex-b.datasetIndex}},tooltip:{...tt,callbacks:{title:it=>it[0].label+' '+Y,footer:it=>{const i=it[0].dataIndex;return 'Delivered vs created: '+pct(del[i],cre[i]);}}}}}}));
+    } }
+
+  // f1) interest & late payment fee: monthly stacked + yearly comparison
+  { const F=(st.fees||[]).slice().sort((a,b)=>String(a.month).localeCompare(String(b.month)));
+    const iv=r=>Number(r.interest_fee||0), lv=r=>Number(r.late_fee||0);
+    const YR={}; F.forEach(r=>{ const y=String(r.month).slice(0,4); YR[y]=YR[y]||{i:0,l:0}; YR[y].i+=iv(r); YR[y].l+=lv(r); });
+    const yrs=Object.keys(YR).sort();
+    EXP.f1={h:['Month','Interest Fee (USD)','Late Payment Fee (USD)','Total (USD)'],r:F.map(r=>[monLbl(r.month),iv(r),lv(r),iv(r)+lv(r)])
+      .concat([[],['Year','Interest Fee (USD)','Late Payment Fee (USD)','Total (USD)']]).concat(yrs.map(y=>[y,YR[y].i,YR[y].l,YR[y].i+YR[y].l]))};
+    if(st.fees===null){ $('f1').innerHTML='<div class="empty" style="padding:30px 0">The fee table is not set up yet.</div>'; }
+    else if(!F.length){ $('f1').innerHTML='<div class="empty" style="padding:30px 0">No fees entered yet — add them on the Interest Rate page.</div>'; }
+    else {
+      const ti=F.reduce((a,r)=>a+iv(r),0), tl=F.reduce((a,r)=>a+lv(r),0), lastY=yrs[yrs.length-1];
+      const stat=(l,v,c)=>'<div><div class="hint" style="margin:0">'+l+'</div><div style="font-size:22px;font-weight:800'+(c?';color:'+c:'')+'">'+v+'</div></div>';
+      $('f1').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin:2px 0 10px">'+
+          stat('Interest Fee ('+lastY+')',money0(YR[lastY].i),P.s1)+stat('Late Payment Fee ('+lastY+')',money0(YR[lastY].l),P.s2)+stat('Total ('+lastY+')',money0(YR[lastY].i+YR[lastY].l))+
+          stat('All-time total',money0(ti+tl))+'</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:16px"><div style="flex:2 1 420px;min-width:0"><div class="hint" style="margin:0 0 4px;font-weight:600">By month</div><div style="position:relative;height:320px"><canvas id="f1m"></canvas></div></div>'+
+        '<div style="flex:1 1 240px;min-width:0"><div class="hint" style="margin:0 0 4px;font-weight:600">By year</div><div style="position:relative;height:320px"><canvas id="f1y"></canvas></div></div></div>';
+      const lblPlugin=(fn)=>({id:'lbl'+Math.random(),afterDatasetsDraw(ch){ const c=ch.ctx; c.save(); c.font='600 10px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center'; fn(ch,c); c.restore(); }});
+      const monthTotals=F.map(r=>iv(r)+lv(r));
+      DASH.charts.push(new Chart($('f1m'),{type:'bar',plugins:[lblPlugin((ch,c)=>{ const m=ch.getDatasetMeta(1); if(ch.getDatasetMeta(0).hidden||m.hidden) return;
+          m.data.forEach((b,i)=>{ if(monthTotals[i]) c.fillText(Math.round(monthTotals[i]).toLocaleString('en-US'),b.x,b.y-5); }); })],
+        data:{labels:F.map(r=>monLbl(r.month)),datasets:[
+          {label:'Interest Fee',data:F.map(iv),...bar(P.s1),borderRadius:0,stack:'f'},
+          {label:'Late Payment Fee',data:F.map(lv),...bar(P.s2),stack:'f'}]},
+        options:{maintainAspectRatio:false,layout:{padding:{top:16}},interaction:{mode:'index',intersect:false},
+          scales:{x:{...axis,stacked:true,grid:{display:false},ticks:{...axis.ticks,maxRotation:60,minRotation:F.length>12?45:0,autoSkip:false,font:{size:10}}},
+                  y:{...axis,stacked:true,beginAtZero:true,ticks:{...axis.ticks,callback:v=>money0(v)}}},
+          plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{label:c=>' '+c.dataset.label+': '+money(c.raw),footer:it=>'Total: '+money(monthTotals[it[0].dataIndex])}}}}}));
+      DASH.charts.push(new Chart($('f1y'),{type:'bar',plugins:[lblPlugin((ch,c)=>{ [0,1].forEach(k=>{ const m=ch.getDatasetMeta(k); if(m.hidden) return;
+          m.data.forEach((b,i)=>{ const v=ch.data.datasets[k].data[i]; if(v) c.fillText(money0(v),b.x,b.y-5); }); }); })],
+        data:{labels:yrs,datasets:[
+          {label:'Interest Fee',data:yrs.map(y=>YR[y].i),...bar(P.s1),maxBarThickness:48},
+          {label:'Late Payment Fee',data:yrs.map(y=>YR[y].l),...bar(P.s2),maxBarThickness:48}]},
+        options:{maintainAspectRatio:false,layout:{padding:{top:16}},interaction:{mode:'index',intersect:false},
+          scales:{x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:true,grace:'10%',ticks:{...axis.ticks,callback:v=>money0(v)}}},
+          plugins:{legend:{...legend,position:'bottom'},tooltip:{...tt,callbacks:{label:c=>' '+c.dataset.label+': '+money(c.raw),footer:it=>{const y=yrs[it[0].dataIndex];return 'Total: '+money(YR[y].i+YR[y].l);}}}}}}));
     } }
 
   // 1) status donut
@@ -983,9 +1104,10 @@ function dashRender(){
       '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
 
   // Excel buttons
-  const names={c0:'created_vs_delivered',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  const names={c0:'created_vs_delivered',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
   $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
     if(!e||!e.r.length) return popup('Nothing to export for this period.');
+    if(id==='f1') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
     let rows=e.r; if(id==='c6'&&reasons.length){ rows=rows.concat([[],['Top reissue reasons','Cards']]).concat(reasons.map(x=>[x.label,x.c])); }
     exportXlsx(names[id]+'.xlsx',e.h,rows); });
 }
@@ -1039,6 +1161,8 @@ async function settingsUsers(){
     ['Card Data — view, add, upload, export',Y,Y],
     ['Card Data — edit a card',Y,Y],
     ['Card Data — remove a card',N,Y],
+    ['Interest Rate — view, add, update monthly fees',Y,Y],
+    ['Interest Rate — remove a month',N,Y],
     ['Dashboard',Y,Y],
     ['My Profile — view & edit own profile',Y,Y],
     ['Settings — Branch Code, Unit, Card Status lists',N,Y],
@@ -1695,7 +1819,9 @@ function makeMockClient(){
   const ref_branch=OPTIONS.branch.map((l,i)=>({id:'b'+i,label:l}));
   const ref_unit=OPTIONS.unit.map((l,i)=>({id:'u'+i,label:l}));
   const ref_card_status=OPTIONS.cardStatus.map((l,i)=>({id:'c'+i,label:l}));
-  const db={merchant_card_detail:cards, submissions:subs, profiles:profiles, ref_branch:ref_branch, ref_unit:ref_unit, ref_card_status:ref_card_status};
+  const fee_monthly=[3,53,260,547,561,693,723,912,1346,1760,2051,2449,2474,2887,3985,4650,4487,4885,6627,7314,7934,9220,10911,16929,14042].map((t,k)=>{
+    const d=new Date(2024,9+k,1), late=k===23?5950:Math.round(t*0.12); return {id:k+1,month:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-01',interest_fee:t-late,late_fee:late,remark:null,updated_at:new Date().toISOString()}; });
+  const db={merchant_card_detail:cards, submissions:subs, profiles:profiles, ref_branch:ref_branch, ref_unit:ref_unit, ref_card_status:ref_card_status, fee_monthly:fee_monthly};
   function run(st){
     try{
       if(st.op==='delete'){ const a=db[st.table]; if(a){for(let i=a.length-1;i>=0;i--){if(st.filters.every(([c,v])=>String(a[i][c])===String(v))&&(st.ins||[]).every(([c,vs])=>vs.includes(String(a[i][c]))))a.splice(i,1);}} return {error:null}; }
