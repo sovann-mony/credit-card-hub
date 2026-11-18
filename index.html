@@ -653,7 +653,7 @@ async function viewHistory(){
   // Filter bar is built once; the lists combine the Settings options with values already used.
   const uniq=a=>{const m=new Map();(a||[]).forEach(v=>{const t=normTxt(v);if(t&&!m.has(t.toLowerCase()))m.set(t.toLowerCase(),t);});return [...m.values()].sort((x,y)=>x.localeCompare(y));};
   $('histBar').innerHTML=filterBar('h',uniq(OPTIONS.unit),uniq(OPTIONS.cardStatus));
-  const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Delivery date','Card status','Remark','Status'];
+  const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Card status','Delivery date','Remark','Status'];
   const td=v=>'<td>'+(v==null||v===''?'—':escHtml(v))+'</td>';
   function addMissing(selId,vals){ const sel=$(selId); const have=new Set([...sel.options].map(o=>normTxt(o.value).toLowerCase()));
     vals.forEach(v=>{ const t=normTxt(v), k=t.toLowerCase(); if(!t||have.has(k)) return; have.add(k); const o=document.createElement('option');o.textContent=t;sel.appendChild(o); }); }
@@ -684,7 +684,7 @@ async function viewHistory(){
     const admin=IS_ADMIN();
     const body=rows.map(s=>{const stc=s.status==='REJECTED'?'bad':'ok';
       return '<tr>'+(admin?bulkCell(s.id,HSEL):'')+td(fmtD(s.created_at))+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
-        td(s.branch_code)+td(s.delivery_unit)+td(fmtD(s.delivery_date))+td(s.delivery_card_status)+td(s.remark)+
+        td(s.branch_code)+td(s.delivery_unit)+td(s.delivery_card_status)+td(fmtD(s.delivery_date))+td(s.remark)+
         '<td><span class="pill '+stc+'">'+escHtml(s.status)+'</span></td>'+
         '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-hedit="'+s.id+'">Edit</button>'+
         (admin?' <button class="btn-xs" style="background:var(--danger)" data-hdel="'+s.id+'">Remove</button>':'')+'</td></tr>';}).join('');
@@ -736,7 +736,7 @@ async function viewHistory(){
   $('hSearch').onclick=load;
   ['hHolder','hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
   $('hClear').onclick=()=>{['hHolder','hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');load();};
-  $('hExport').onclick=()=>{const rows=current().map(s=>[fmtD(s.created_at),s.card_holder_name,s.delivery_name,s.staff_id,s.branch_code,s.delivery_unit,fmtD(s.delivery_date),s.delivery_card_status,s.remark,s.status]);
+  $('hExport').onclick=()=>{const rows=current().map(s=>[fmtD(s.created_at),s.card_holder_name,s.delivery_name,s.staff_id,s.branch_code,s.delivery_unit,s.delivery_card_status,fmtD(s.delivery_date),s.remark,s.status]);
     if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('history.xlsx',head,rows);};
   load();
 }
