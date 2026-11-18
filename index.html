@@ -53,6 +53,15 @@
   .pf-head{display:flex;align-items:center;gap:16px;margin-bottom:14px}
   .pf-head img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--line);background:var(--card)}
   .perm td.y{color:var(--ok);font-weight:700}.perm td.n{color:var(--danger);font-weight:700}
+  /* dashboard */
+  .dash-filters{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:10px;margin-bottom:12px}
+  .dash-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px}
+  .dgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .dash-card{padding:14px;margin:0;min-width:0}.dash-card.wide{grid-column:1/-1}
+  .dash-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px}
+  .dash-title{font-weight:700;font-size:14.5px}
+  .dash-split{display:grid;grid-template-columns:minmax(0,2fr) minmax(200px,1fr);gap:16px;align-items:start}
+  @media (max-width:820px){.dgrid{grid-template-columns:1fr}.dash-split{grid-template-columns:1fr}}
   /* date boxes shown as DD-MMM-YY */
   .dmy{position:relative}
   .dmy .dmy-show{cursor:pointer;padding-right:34px;background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'><rect x='3' y='4' width='18' height='18' rx='2'/><path d='M16 2v4M8 2v4M3 10h18'/></svg>") no-repeat right 10px center}
@@ -63,6 +72,9 @@
   label .km{display:block;color:var(--hint);font-weight:400;font-size:12px}
   label .req{color:var(--accent)}
   input,select,textarea{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--text);font-size:14px}
+  body.dark input,body.dark select,body.dark textarea{background-color:var(--bg);color:var(--text)}
+  body.dark .dmy .dmy-show{background-color:var(--bg)}
+  body.dark option{background:var(--bg);color:var(--text)}
   button.primary{width:100%;margin-top:18px;padding:12px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-text);font-size:15px;font-weight:700;cursor:pointer}
   button.primary:disabled{opacity:.5}
   .btn-sm{padding:8px 10px;border:0;border-radius:8px;font-weight:600;font-size:13px;color:#fff;cursor:pointer}
@@ -651,15 +663,210 @@ async function viewHistory(){
 }
 
 /* ---------- DASHBOARD ---------- */
+/* ---------- DASHBOARD ---------- */
+/* Charts: Chart.js (loaded on demand). Colours follow the data-viz palette:
+   status colours for delivery state (with labels, never colour alone), blue/orange for series. */
+const DASH={charts:[],state:null};
+const DPAL={
+  light:{s1:'#2a78d6',s2:'#eb6834',s3:'#1baf7a',s4:'#6250d6',s5:'#e87ba4',good:'#0ca30c',warn:'#fab219',serious:'#ec835a',crit:'#d03b3b',none:'#a3a3a3',text:'#1a1a1a',muted:'#6b7280',grid:'#e2e4e8',surface:'#f3f4f6'},
+  dark:{s1:'#3987e5',s2:'#d95926',s3:'#199e70',s4:'#9085e9',s5:'#d55181',good:'#0ca30c',warn:'#fab219',serious:'#ec835a',crit:'#d03b3b',none:'#6b6b66',text:'#e8edf2',muted:'#8b97a7',grid:'#2b3747',surface:'#1a2330'}
+};
+function loadChartJs(){
+  if(window.Chart) return Promise.resolve();
+  return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'; s.onload=res; s.onerror=()=>rej(new Error('Could not load the chart library.')); document.head.appendChild(s); });
+}
+const dISO=d=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+const dAdd=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+const dParse=s=>{const m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?new Date(+m[1],+m[2]-1,+m[3]):null;};
+const lc=v=>String(v==null?'':v).trim().toLowerCase();
+const pct=(a,b)=>b?Math.round(a*100/b)+'%':'—';
+
 async function viewDashboard(){
-  $('main').innerHTML='<h2>Dashboard</h2><div class="grid" id="stats"><div class="empty">Loading…</div></div><div id="bd"></div>';
-  const {data,error}=await sb.from('merchant_card_detail').select('cardholder_name,reason_for_reissue');
-  if(error){$('stats').innerHTML='<div class="empty">'+error.message+'</div>';return;}
-  const rows=data||[]; const isNew=r=>!(r.reason_for_reissue&&String(r.reason_for_reissue).trim());
-  const news=rows.filter(isNew).length, reissues=rows.length-news;
-  const {data:subd}=await sb.from('submissions').select('id');
-  $('stats').innerHTML=stat(rows.length,'Total cards')+stat(news,'New cards')+stat(reissues,'Reissues')+stat((subd||[]).length,'Submissions');
-  $('bd').innerHTML='';
+  $('main').innerHTML='<h2>Dashboard</h2>'+
+    '<div class="card dash-filters">'+
+      '<div><label class="hint" style="margin:0 0 2px">Period</label><select id="dRange" style="width:170px">'+
+        '<option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="month">This month</option><option value="lastmonth">Last month</option><option value="year">This year</option><option value="all">All time</option><option value="custom">Custom…</option></select></div>'+
+      '<div id="dCustom" style="display:none;gap:10px"><div><label class="hint" style="margin:0 0 2px">From</label><input type="date" id="dFrom" style="width:150px"></div><div><label class="hint" style="margin:0 0 2px">To</label><input type="date" id="dTo" style="width:150px"></div></div>'+
+      '<button class="btn-sm" id="dGo" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
+      '<div class="hint" id="dScope" style="margin:0 0 0 auto;align-self:center"></div>'+
+    '</div>'+
+    '<div class="dash-kpis" id="dKpi"><div class="empty">Loading…</div></div>'+
+    '<div class="dgrid" id="dGrid"></div>';
+  $('dRange').onchange=()=>{ $('dCustom').style.display=$('dRange').value==='custom'?'flex':'none'; if($('dRange').value!=='custom') dashLoad(); };
+  $('dGo').onclick=dashLoad;
+  try{ await loadChartJs(); }catch(e){ $('dKpi').innerHTML='<div class="empty">'+escHtml(e.message)+'</div>'; return; }
+  dashLoad();
+}
+function dashRange(){
+  const v=$('dRange').value, t=new Date(); t.setHours(0,0,0,0);
+  if(v==='7') return {from:dAdd(t,-6),to:t,label:'Last 7 days'};
+  if(v==='30') return {from:dAdd(t,-29),to:t,label:'Last 30 days'};
+  if(v==='month') return {from:new Date(t.getFullYear(),t.getMonth(),1),to:t,label:'This month'};
+  if(v==='lastmonth') return {from:new Date(t.getFullYear(),t.getMonth()-1,1),to:new Date(t.getFullYear(),t.getMonth(),0),label:'Last month'};
+  if(v==='year') return {from:new Date(t.getFullYear(),0,1),to:t,label:'This year'};
+  if(v==='custom'){ const f=dParse($('dFrom').value), to=dParse($('dTo').value); return {from:f,to:to,label:'Custom'}; }
+  return {from:null,to:null,label:'All time'};
+}
+async function dashLoad(){
+  $('dKpi').innerHTML='<div class="empty">Loading…</div>'; $('dGrid').innerHTML='';
+  const [c,s]=await Promise.all([fetchAll('merchant_card_detail','id,cardholder_name,create_date,reason_for_reissue'),
+    fetchAll('submissions','id,card_ref,delivery_card_status,delivery_name,staff_id,branch_code,delivery_unit,delivery_date,created_at')]);
+  if(c.error||s.error){ $('dKpi').innerHTML='<div class="empty">'+escHtml((c.error||s.error).message)+'</div>'; return; }
+  DASH.state={cards:c.data||[],subs:s.data||[],range:dashRange()};
+  dashRender();
+}
+function dashRender(){
+  const st=DASH.state; if(!st||!$('dGrid')) return;
+  DASH.charts.forEach(ch=>{try{ch.destroy();}catch(e){}}); DASH.charts=[];
+  const P=document.body.classList.contains('dark')?DPAL.dark:DPAL.light;
+  const {from,to,label}=st.range;
+  const fromS=from?dISO(from):null, toS=to?dISO(to):null;
+  const inRange=d=>{ if(!fromS&&!toS) return true; if(!d) return false; const x=String(d).slice(0,10); return (!fromS||x>=fromS)&&(!toS||x<=toS); };
+  $('dScope').textContent=label+(fromS||toS?' · '+(fromS?fmtD(fromS):'…')+' → '+(toS?fmtD(toS):'…'):'');
+
+  const LATEST=latestByRef(st.subs);
+  const cards=st.cards.filter(r=>inRange(r.create_date));
+  const subs=st.subs.filter(r=>inRange(r.delivery_date));
+  const isNew=r=>!(r.reason_for_reissue&&String(r.reason_for_reissue).trim());
+  const stateOf=r=>{ const l=LATEST[String(r.id)]; if(!l) return 'Not yet submitted'; const k=lc(l.delivery_card_status);
+    return k==='delivered'?'Delivered':k==='on hold'?'On Hold':k==='not delivered'?'Not Delivered':(l.delivery_card_status||'Other'); };
+  const stateColor=n=>({'Delivered':P.good,'On Hold':P.warn,'Not Delivered':P.crit,'Not yet submitted':P.none})[n];
+  const extra=[P.s1,P.s4,P.s3,P.s5,P.s2];
+
+  // ---------- KPI tiles ----------
+  const byState={}; cards.forEach(r=>{const k=stateOf(r);byState[k]=(byState[k]||0)+1;});
+  const delivered=byState['Delivered']||0, pending=cards.length-delivered;
+  const tile=(n,l,sub)=>'<div class="stat"><div class="n">'+n+'</div><div class="l">'+l+'</div>'+(sub?'<div class="l" style="margin-top:2px">'+sub+'</div>':'')+'</div>';
+  $('dKpi').innerHTML=tile(cards.length,'Total cards')+tile(cards.filter(isNew).length,'New cards')+tile(cards.filter(r=>!isNew(r)).length,'Reissues')+
+    tile(delivered,'✅ Delivered',pct(delivered,cards.length)+' of cards')+tile(pending,'⏳ Pending','not delivered yet')+tile(byState['On Hold']||0,'⏸ On Hold')+tile(subs.length,'Submissions','delivery records in period');
+
+  // ---------- layout ----------
+  const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
+    '<button class="btn-xs" style="background:#6b7280;white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
+  $('dGrid').innerHTML=
+    box('c1','Delivery status','Cards created in the period, by latest delivery status')+
+    box('c2','Pending cards by age','Days since the card was created (not yet delivered)')+
+    box('c3','Deliveries over time','Records with status Delivered, by delivery date',true)+
+    box('c4','Deliveries by unit','Delivery records in the period')+
+    box('c5','Top 10 branches','Delivery records by branch code · delivered rate in tooltip')+
+    box('c6','New vs reissue cards','Cards created per period',true)+
+    box('c7','Top delivery staff','Delivery records in the period',true);
+  const EXP={};
+  const canvas=(id,h)=>{ $(id).innerHTML='<div style="position:relative;height:'+(h||260)+'px"><canvas></canvas></div>'; return $(id).querySelector('canvas'); };
+  const empty=(id,msg)=>{ $(id).innerHTML='<div class="empty" style="padding:30px 0">'+(msg||'No data for this period.')+'</div>'; };
+  Chart.defaults.animation=false; Chart.defaults.font.family=getComputedStyle(document.body).fontFamily; Chart.defaults.font.size=12; Chart.defaults.color=P.muted;
+  const axis={grid:{color:P.grid,drawTicks:false},border:{display:false},ticks:{color:P.muted,padding:6}};
+  const tt={backgroundColor:P.surface,titleColor:P.text,bodyColor:P.text,borderColor:P.grid,borderWidth:1,padding:10,boxPadding:4,usePointStyle:true};
+  const legend={position:'bottom',labels:{color:P.text,usePointStyle:true,pointStyle:'rectRounded',boxWidth:10,padding:14}};
+  const bar=(color)=>({backgroundColor:color,borderRadius:4,borderSkipped:'start',maxBarThickness:34,borderColor:P.surface,borderWidth:{top:0,right:0,bottom:0,left:0}});
+
+  // 1) status donut
+  const order=['Delivered','On Hold','Not Delivered','Not yet submitted'];
+  const others=Object.keys(byState).filter(k=>!order.includes(k)).sort();
+  const sLabels=order.filter(k=>byState[k]).concat(others);
+  EXP.c1={h:['Status','Cards','Share'],r:sLabels.map(k=>[k,byState[k],pct(byState[k],cards.length)])};
+  if(!cards.length) empty('c1'); else {
+    let ei=0; const cols=sLabels.map(k=>stateColor(k)||extra[(ei++)%extra.length]);
+    DASH.charts.push(new Chart(canvas('c1',$('c1').clientWidth<480?340:260),{type:'doughnut',data:{labels:sLabels.map(k=>k+' · '+byState[k]+' ('+pct(byState[k],cards.length)+')'),datasets:[{data:sLabels.map(k=>byState[k]),backgroundColor:cols,borderColor:P.surface,borderWidth:2,hoverOffset:6}]},
+      options:{maintainAspectRatio:false,cutout:'62%',plugins:{legend:{...legend,position:$('c1').clientWidth<480?'bottom':'right'},tooltip:{...tt,callbacks:{label:c=>' '+c.label}}}}}));
+  }
+
+  // 2) pending by age (stacked by state)
+  const today=new Date(); today.setHours(0,0,0,0);
+  const buckets=['0–3 days','4–7 days','8–14 days','15–30 days','Over 30 days'];
+  const bIdx=d=>d<=3?0:d<=7?1:d<=14?2:d<=30?3:4;
+  const pendStates=['Not yet submitted','On Hold','Not Delivered'].concat(others);
+  const ageM={}; pendStates.forEach(k=>ageM[k]=[0,0,0,0,0]);
+  let noDate=0;
+  cards.forEach(r=>{ const k=stateOf(r); if(k==='Delivered') return; const cd=dParse(r.create_date); if(!cd){noDate++;return;}
+    const d=Math.max(0,Math.round((today-cd)/86400000)); ageM[k][bIdx(d)]++; });
+  const usedPend=pendStates.filter(k=>ageM[k].some(x=>x));
+  EXP.c2={h:['Age'].concat(usedPend).concat(['Total']),r:buckets.map((b,i)=>[b].concat(usedPend.map(k=>ageM[k][i])).concat([usedPend.reduce((a,k)=>a+ageM[k][i],0)]))};
+  if(!usedPend.length) empty('c2', pending? 'Pending cards have no create date.' : 'Nothing pending — every card in this period is delivered. 🎉'); else {
+    let ei=0;
+    DASH.charts.push(new Chart(canvas('c2'),{type:'bar',data:{labels:buckets,datasets:usedPend.map(k=>({label:k,data:ageM[k],...bar(stateColor(k)||extra[(ei++)%extra.length]),borderWidth:{top:2,right:0,bottom:0,left:0}}))},
+      options:{maintainAspectRatio:false,scales:{x:{...axis,stacked:true,grid:{display:false}},y:{...axis,stacked:true,beginAtZero:true,ticks:{...axis.ticks,precision:0}}},
+        plugins:{legend,tooltip:{...tt,mode:'index',callbacks:{footer:it=>'Total: '+it.reduce((a,x)=>a+x.parsed.y,0)}}}}}));
+    if(noDate) $('c2').insertAdjacentHTML('beforeend','<div class="hint" style="margin:6px 0 0">'+noDate+' pending card(s) have no create date and are not shown.</div>');
+  }
+
+  // time buckets for 3) and 6)
+  const dates=[...subs.map(s=>s.delivery_date),...cards.map(c=>c.create_date)].filter(Boolean).map(x=>String(x).slice(0,10)).sort();
+  const tFrom=from||dParse(dates[0]), tTo=to||dParse(dates[dates.length-1]);
+  const span=tFrom&&tTo?Math.round((tTo-tFrom)/86400000)+1:0;
+  const gran=span<=62?'day':span<=400?'week':'month';
+  const keyOf=iso=>{ const d=dParse(iso); if(!d) return null;
+    if(gran==='day') return dISO(d);
+    if(gran==='week'){ const m=dAdd(d,-((d.getDay()+6)%7)); return dISO(m); }
+    return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-01'; };
+  const keys=[]; if(tFrom&&tTo){ let d=dParse(keyOf(dISO(tFrom)));
+    while(d<=tTo){ keys.push(dISO(d)); d=gran==='day'?dAdd(d,1):gran==='week'?dAdd(d,7):new Date(d.getFullYear(),d.getMonth()+1,1); } }
+  const kLabel=k=>gran==='month'?MON[+k.slice(5,7)-1]+'-'+k.slice(2,4):fmtD(k);
+  const gName=gran==='day'?'day':gran==='week'?'week (starting Monday)':'month';
+
+  // 3) deliveries over time
+  const delPer={}; subs.forEach(s=>{ if(lc(s.delivery_card_status)!=='delivered') return; const k=keyOf(s.delivery_date); if(k) delPer[k]=(delPer[k]||0)+1; });
+  $('c3').previousElementSibling.querySelector('.hint').textContent='Records with status Delivered, per '+gName;
+  EXP.c3={h:[gran==='day'?'Date':gran==='week'?'Week starting':'Month','Delivered'],r:keys.map(k=>[kLabel(k),delPer[k]||0])};
+  if(!keys.length||!Object.keys(delPer).length) empty('c3'); else
+    DASH.charts.push(new Chart(canvas('c3',240),{type:'bar',data:{labels:keys.map(kLabel),datasets:[{label:'Delivered',data:keys.map(k=>delPer[k]||0),...bar(P.s1)}]},
+      options:{maintainAspectRatio:false,scales:{x:{...axis,grid:{display:false},ticks:{...axis.ticks,maxRotation:0,autoSkip:true,maxTicksLimit:12}},y:{...axis,beginAtZero:true,ticks:{...axis.ticks,precision:0}}},
+        plugins:{legend:{display:false},tooltip:{...tt,callbacks:{title:it=>(gran==='week'?'Week of ':'')+it[0].label}}}}}));
+
+  // 4) by unit
+  const U={}; subs.forEach(s=>{ const u=s.delivery_unit||'(none)'; U[u]=U[u]||{d:0,n:0}; if(lc(s.delivery_card_status)==='delivered')U[u].d++; else U[u].n++; });
+  const units=Object.keys(U).sort((a,b)=>(U[b].d+U[b].n)-(U[a].d+U[a].n));
+  EXP.c4={h:['Unit','Delivered','Not delivered','Total','Delivered rate'],r:units.map(u=>[u,U[u].d,U[u].n,U[u].d+U[u].n,pct(U[u].d,U[u].d+U[u].n)])};
+  if(!units.length) empty('c4'); else
+    DASH.charts.push(new Chart(canvas('c4',Math.max(200,units.length*42+70)),{type:'bar',data:{labels:units,datasets:[
+        {label:'Delivered',data:units.map(u=>U[u].d),...bar(P.good)},
+        {label:'Not delivered',data:units.map(u=>U[u].n),...bar(P.crit),borderWidth:{top:0,right:0,bottom:0,left:2}}]},
+      options:{indexAxis:'y',maintainAspectRatio:false,scales:{x:{...axis,stacked:true,beginAtZero:true,ticks:{...axis.ticks,precision:0}},y:{...axis,stacked:true,grid:{display:false}}},
+        plugins:{legend,tooltip:{...tt,mode:'index',callbacks:{footer:it=>{const u=units[it[0].dataIndex];return 'Total: '+(U[u].d+U[u].n)+' · Delivered rate: '+pct(U[u].d,U[u].d+U[u].n);}}}}}}));
+
+  // 5) top branches
+  const B={}; subs.forEach(s=>{ const b=s.branch_code||'(none)'; B[b]=B[b]||{t:0,d:0}; B[b].t++; if(lc(s.delivery_card_status)==='delivered')B[b].d++; });
+  const brs=Object.keys(B).sort((a,b)=>B[b].t-B[a].t).slice(0,10);
+  EXP.c5={h:['Branch code','Delivery records','Delivered','Delivered rate'],r:Object.keys(B).sort((a,b)=>B[b].t-B[a].t).map(b=>[b,B[b].t,B[b].d,pct(B[b].d,B[b].t)])};
+  if(!brs.length) empty('c5'); else
+    DASH.charts.push(new Chart(canvas('c5',Math.max(200,brs.length*30+40)),{type:'bar',data:{labels:brs.map(b=>'Branch '+b),datasets:[{label:'Delivery records',data:brs.map(b=>B[b].t),...bar(P.s1)}]},
+      options:{indexAxis:'y',maintainAspectRatio:false,scales:{x:{...axis,beginAtZero:true,ticks:{...axis.ticks,precision:0}},y:{...axis,grid:{display:false}}},
+        plugins:{legend:{display:false},tooltip:{...tt,callbacks:{label:c=>' '+c.parsed.x+' records',afterLabel:c=>' Delivered: '+B[brs[c.dataIndex]].d+' ('+pct(B[brs[c.dataIndex]].d,B[brs[c.dataIndex]].t)+')'}}}}}));
+
+  // 6) new vs reissue over time + top reasons
+  const NR={}; cards.forEach(r=>{ const k=keyOf(r.create_date); if(!k)return; NR[k]=NR[k]||{n:0,r:0}; isNew(r)?NR[k].n++:NR[k].r++; });
+  const RS={}; cards.filter(r=>!isNew(r)).forEach(r=>{ const k=String(r.reason_for_reissue).trim(); const key=k.toLowerCase(); RS[key]=RS[key]||{label:k,c:0}; RS[key].c++; });
+  const reasons=Object.values(RS).sort((a,b)=>b.c-a.c);
+  $('c6').previousElementSibling.querySelector('.hint').textContent='Cards created per '+gName+' · top reissue reasons on the right';
+  EXP.c6={h:[gran==='day'?'Date':gran==='week'?'Week starting':'Month','New','Reissue','Total'],r:keys.map(k=>[kLabel(k),(NR[k]||{}).n||0,(NR[k]||{}).r||0,((NR[k]||{}).n||0)+((NR[k]||{}).r||0)])};
+  if(!keys.length||!Object.keys(NR).length) empty('c6'); else {
+    $('c6').innerHTML='<div class="dash-split"><div style="position:relative;height:240px;min-width:0"><canvas></canvas></div>'+
+      '<div><div class="hint" style="margin:0 0 6px;font-weight:600">Top reissue reasons</div>'+(reasons.length?'<table class="htable"><tbody>'+
+      reasons.slice(0,6).map(x=>'<tr><td>'+escHtml(x.label)+'</td><td style="text-align:right;font-weight:600">'+x.c+'</td></tr>').join('')+'</tbody></table>':'<div class="hint">No reissues in this period.</div>')+'</div></div>';
+    DASH.charts.push(new Chart($('c6').querySelector('canvas'),{type:'bar',data:{labels:keys.map(kLabel),datasets:[
+        {label:'New',data:keys.map(k=>(NR[k]||{}).n||0),...bar(P.s1)},
+        {label:'Reissue',data:keys.map(k=>(NR[k]||{}).r||0),...bar(P.s2),borderWidth:{top:2,right:0,bottom:0,left:0}}]},
+      options:{maintainAspectRatio:false,scales:{x:{...axis,stacked:true,grid:{display:false},ticks:{...axis.ticks,maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{...axis,stacked:true,beginAtZero:true,ticks:{...axis.ticks,precision:0}}},
+        plugins:{legend,tooltip:{...tt,mode:'index',callbacks:{footer:it=>'Total: '+it.reduce((a,x)=>a+x.parsed.y,0)}}}}}));
+  }
+
+  // 7) top delivery staff
+  const S={}; subs.forEach(s=>{ const k=(s.delivery_name||'—')+'|'+(s.staff_id||''); S[k]=S[k]||{name:s.delivery_name||'—',id:s.staff_id||'—',t:0,d:0}; S[k].t++; if(lc(s.delivery_card_status)==='delivered')S[k].d++; });
+  const staff=Object.values(S).sort((a,b)=>b.t-a.t||b.d-a.d);
+  EXP.c7={h:['#','Delivery name','Staff ID','Records','Delivered','Delivered rate'],r:staff.map((x,i)=>[i+1,x.name,x.id,x.t,x.d,pct(x.d,x.t)])};
+  if(!staff.length) empty('c7'); else
+    $('c7').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr><th>#</th><th>Delivery name</th><th>Staff ID</th><th style="text-align:right">Records</th><th style="text-align:right">Delivered</th><th style="min-width:160px">Delivered rate</th></tr></thead><tbody>'+
+      staff.slice(0,10).map((x,i)=>{const r=x.t?Math.round(x.d*100/x.t):0;
+        return '<tr><td>'+(i+1)+'</td><td style="font-weight:600">'+escHtml(x.name)+'</td><td>'+escHtml(x.id)+'</td><td style="text-align:right">'+x.t+'</td><td style="text-align:right">'+x.d+'</td>'+
+          '<td><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:8px;border-radius:4px;background:var(--line);overflow:hidden"><div style="width:'+r+'%;height:100%;background:'+P.good+';border-radius:4px"></div></div><span style="width:38px;text-align:right">'+r+'%</span></div></td></tr>';}).join('')+
+      '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
+
+  // Excel buttons
+  const names={c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
+    if(!e||!e.r.length) return popup('Nothing to export for this period.');
+    let rows=e.r; if(id==='c6'&&reasons.length){ rows=rows.concat([[],['Top reissue reasons','Cards']]).concat(reasons.map(x=>[x.label,x.c])); }
+    exportXlsx(names[id]+'.xlsx',e.h,rows); });
 }
 
 /* ---------- SETTINGS (admin) ---------- */
@@ -1359,7 +1566,7 @@ function makeMockClient(){
 /* theme toggle */
 function applyTheme(t){ document.body.classList.toggle('dark', t==='dark'); const b=$('themeBtn'); if(b)b.textContent=t==='dark'?'\u2600\uFE0F':'\uD83C\uDF19'; }
 (function(){ let t='light'; try{t=localStorage.getItem('cc_theme')||'light';}catch(e){} applyTheme(t); })();
-if($('themeBtn')) $('themeBtn').onclick=function(){ const dark=!document.body.classList.contains('dark'); const t=dark?'dark':'light'; try{localStorage.setItem('cc_theme',t);}catch(e){} applyTheme(t); };
+if($('themeBtn')) $('themeBtn').onclick=function(){ const dark=!document.body.classList.contains('dark'); const t=dark?'dark':'light'; try{localStorage.setItem('cc_theme',t);}catch(e){} applyTheme(t); if(DASH.state&&$('dGrid')) dashRender(); };
 boot();
 </script>
 </body>
