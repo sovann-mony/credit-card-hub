@@ -913,7 +913,7 @@ function dashRender(){
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   $('dGrid').innerHTML=
     box('c0','Cards created vs Delivered','Created = cards by create month · Delivered = records with status Delivered, by delivery month',true)+
-    box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page',true)+
+    box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · use the year box to filter',true)+
     box('c1','Delivery status','Cards created in the period, by latest delivery status')+
     box('c2','Pending cards by age','Days since the card was created (not yet delivered)')+
     box('c3','Deliveries over time','Records with status Delivered, by delivery date',true)+
@@ -964,42 +964,37 @@ function dashRender(){
           plugins:{legend:{...legend,position:'top',labels:{...legend.labels,sort:(a,b)=>a.datasetIndex-b.datasetIndex}},tooltip:{...tt,callbacks:{title:it=>it[0].label+' '+Y,footer:it=>{const i=it[0].dataIndex;return 'Delivered vs created: '+pct(del[i],cre[i]);}}}}}}));
     } }
 
-  // f1) interest & late payment fee: monthly stacked + yearly comparison
-  { const F=(st.fees||[]).slice().sort((a,b)=>String(a.month).localeCompare(String(b.month)));
+  // f1) interest & late payment fee: monthly stacked, with a year filter
+  { const ALLF=(st.fees||[]).slice().sort((a,b)=>String(a.month).localeCompare(String(b.month)));
     const iv=r=>Number(r.interest_fee||0), lv=r=>Number(r.late_fee||0);
-    const YR={}; F.forEach(r=>{ const y=String(r.month).slice(0,4); YR[y]=YR[y]||{i:0,l:0}; YR[y].i+=iv(r); YR[y].l+=lv(r); });
-    const yrs=Object.keys(YR).sort();
-    EXP.f1={h:['Month','Interest Fee (USD)','Late Payment Fee (USD)','Total (USD)'],r:F.map(r=>[monLbl(r.month),iv(r),lv(r),iv(r)+lv(r)])
-      .concat([[],['Year','Interest Fee (USD)','Late Payment Fee (USD)','Total (USD)']]).concat(yrs.map(y=>[y,YR[y].i,YR[y].l,YR[y].i+YR[y].l]))};
+    const fYears=[...new Set(ALLF.map(r=>String(r.month).slice(0,4)))].sort().reverse();
+    if(DASH.feeYear && !fYears.includes(DASH.feeYear)) DASH.feeYear='';
+    const FY=DASH.feeYear||'', F=ALLF.filter(r=>!FY||String(r.month).slice(0,4)===FY), scopeL=FY||'all years';
+    const head=$('f1').previousElementSibling;
+    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dFeeYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+fYears.map(y=>'<option'+(y===FY?' selected':'')+'>'+y+'</option>').join('')+'</select>');
+    $('dFeeYear').onchange=function(){ DASH.feeYear=this.value; dashRender(); };
+    EXP.f1={h:['Month','Interest Fee (USD)','Late Payment Fee (USD)','Total (USD)'],r:F.map(r=>[monLbl(r.month),iv(r),lv(r),iv(r)+lv(r)])};
+    if(F.length){ const ti=F.reduce((a,r)=>a+iv(r),0), tl=F.reduce((a,r)=>a+lv(r),0); EXP.f1.r.push(['Total ('+scopeL+')',ti,tl,ti+tl]); }
     if(st.fees===null){ $('f1').innerHTML='<div class="empty" style="padding:30px 0">The fee table is not set up yet.</div>'; }
     else if(!F.length){ $('f1').innerHTML='<div class="empty" style="padding:30px 0">No fees entered yet — add them on the Interest Rate page.</div>'; }
     else {
-      const ti=F.reduce((a,r)=>a+iv(r),0), tl=F.reduce((a,r)=>a+lv(r),0), lastY=yrs[yrs.length-1];
+      const ti=F.reduce((a,r)=>a+iv(r),0), tl=F.reduce((a,r)=>a+lv(r),0);
       const stat=(l,v,c)=>'<div><div class="hint" style="margin:0">'+l+'</div><div style="font-size:22px;font-weight:800'+(c?';color:'+c:'')+'">'+v+'</div></div>';
       $('f1').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin:2px 0 10px">'+
-          stat('Interest Fee ('+lastY+')',money0(YR[lastY].i),P.s1)+stat('Late Payment Fee ('+lastY+')',money0(YR[lastY].l),P.s2)+stat('Total ('+lastY+')',money0(YR[lastY].i+YR[lastY].l))+
-          stat('All-time total',money0(ti+tl))+'</div>'+
-        '<div style="display:flex;flex-wrap:wrap;gap:16px"><div style="flex:2 1 420px;min-width:0"><div class="hint" style="margin:0 0 4px;font-weight:600">By month</div><div style="position:relative;height:320px"><canvas id="f1m"></canvas></div></div>'+
-        '<div style="flex:1 1 240px;min-width:0"><div class="hint" style="margin:0 0 4px;font-weight:600">By year</div><div style="position:relative;height:320px"><canvas id="f1y"></canvas></div></div></div>';
-      const lblPlugin=(fn)=>({id:'lbl'+Math.random(),afterDatasetsDraw(ch){ const c=ch.ctx; c.save(); c.font='600 10px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center'; fn(ch,c); c.restore(); }});
+          stat('Interest Fee ('+scopeL+')',money0(ti),P.s1)+stat('Late Payment Fee ('+scopeL+')',money0(tl),P.s2)+stat('Total ('+scopeL+')',money0(ti+tl))+'</div>'+
+        '<div style="position:relative;height:340px"><canvas id="f1m"></canvas></div>';
       const monthTotals=F.map(r=>iv(r)+lv(r));
-      DASH.charts.push(new Chart($('f1m'),{type:'bar',plugins:[lblPlugin((ch,c)=>{ const m=ch.getDatasetMeta(1); if(ch.getDatasetMeta(0).hidden||m.hidden) return;
-          m.data.forEach((b,i)=>{ if(monthTotals[i]) c.fillText(Math.round(monthTotals[i]).toLocaleString('en-US'),b.x,b.y-5); }); })],
+      const totLbl={id:'feeTot',afterDatasetsDraw(ch){ if(ch.getDatasetMeta(0).hidden||ch.getDatasetMeta(1).hidden) return; const c=ch.ctx, m=ch.getDatasetMeta(1);
+        c.save(); c.font='600 10px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
+        m.data.forEach((b,i)=>{ if(monthTotals[i]) c.fillText(Math.round(monthTotals[i]).toLocaleString('en-US'),b.x,b.y-5); }); c.restore(); }};
+      DASH.charts.push(new Chart($('f1m'),{type:'bar',plugins:[totLbl],
         data:{labels:F.map(r=>monLbl(r.month)),datasets:[
           {label:'Interest Fee',data:F.map(iv),...bar(P.s1),borderRadius:0,stack:'f'},
           {label:'Late Payment Fee',data:F.map(lv),...bar(P.s2),stack:'f'}]},
         options:{maintainAspectRatio:false,layout:{padding:{top:16}},interaction:{mode:'index',intersect:false},
           scales:{x:{...axis,stacked:true,grid:{display:false},ticks:{...axis.ticks,maxRotation:60,minRotation:F.length>12?45:0,autoSkip:false,font:{size:10}}},
-                  y:{...axis,stacked:true,beginAtZero:true,ticks:{...axis.ticks,callback:v=>money0(v)}}},
+                  y:{...axis,stacked:true,beginAtZero:true,grace:'6%',ticks:{...axis.ticks,callback:v=>money0(v)}}},
           plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{label:c=>' '+c.dataset.label+': '+money(c.raw),footer:it=>'Total: '+money(monthTotals[it[0].dataIndex])}}}}}));
-      DASH.charts.push(new Chart($('f1y'),{type:'bar',plugins:[lblPlugin((ch,c)=>{ [0,1].forEach(k=>{ const m=ch.getDatasetMeta(k); if(m.hidden) return;
-          m.data.forEach((b,i)=>{ const v=ch.data.datasets[k].data[i]; if(v) c.fillText(money0(v),b.x,b.y-5); }); }); })],
-        data:{labels:yrs,datasets:[
-          {label:'Interest Fee',data:yrs.map(y=>YR[y].i),...bar(P.s1),maxBarThickness:48},
-          {label:'Late Payment Fee',data:yrs.map(y=>YR[y].l),...bar(P.s2),maxBarThickness:48}]},
-        options:{maintainAspectRatio:false,layout:{padding:{top:16}},interaction:{mode:'index',intersect:false},
-          scales:{x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:true,grace:'10%',ticks:{...axis.ticks,callback:v=>money0(v)}}},
-          plugins:{legend:{...legend,position:'bottom'},tooltip:{...tt,callbacks:{label:c=>' '+c.dataset.label+': '+money(c.raw),footer:it=>{const y=yrs[it[0].dataIndex];return 'Total: '+money(YR[y].i+YR[y].l);}}}}}}));
     } }
 
   // 1) status donut
