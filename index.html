@@ -586,7 +586,7 @@ function submitUploader(host){
 }
 async function viewHistory(){
   $('main').innerHTML='<h2>History</h2><div id="histBar"></div><div id="hist"><div class="empty">Loading…</div></div>';
-  let ALL=[];
+  let ALL=[]; const HSEL=new Set();
   // Filter bar is built once; the lists combine the Settings options with values already used.
   $('histBar').innerHTML=filterBar('h',[...new Set(OPTIONS.unit)].sort(),[...new Set(OPTIONS.cardStatus)].sort());
   const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Delivery date','Card status','Remark','Status'];
@@ -595,9 +595,10 @@ async function viewHistory(){
     vals.filter(v=>v&&!have.has(v)).forEach(v=>{const o=document.createElement('option');o.textContent=v;sel.appendChild(o);}); }
   async function load(){
     $('hist').innerHTML='<div class="empty">Loading…</div>';
-    const {data,error}=await sb.from('submissions').select('*').order('created_at',{ascending:false});
+    const {data,error}=await fetchAll('submissions','*');
+    if(data) data.sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
     if(error){$('hist').innerHTML='<div class="empty">'+escHtml(error.message)+'</div>';return;}
-    ALL=data||[];
+    ALL=data||[]; { const live=new Set(ALL.map(x=>String(x.id))); [...HSEL].forEach(id=>{ if(!live.has(id)) HSEL.delete(id); }); }
     addMissing('hUnit',ALL.map(s=>s.delivery_unit)); addMissing('hStatus',ALL.map(s=>s.delivery_card_status));
     render();
   }
@@ -616,12 +617,13 @@ async function viewHistory(){
     if(!rows.length){$('hist').innerHTML='<div class="empty">No submissions match.</div>';return;}
     const admin=IS_ADMIN();
     const body=rows.map(s=>{const stc=s.status==='REJECTED'?'bad':'ok';
-      return '<tr>'+td(fmtD(s.created_at))+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
+      return '<tr>'+(admin?bulkCell(s.id,HSEL):'')+td(fmtD(s.created_at))+td(s.card_holder_name)+td(s.delivery_name)+td(s.staff_id)+
         td(s.branch_code)+td(s.delivery_unit)+td(fmtD(s.delivery_date))+td(s.delivery_card_status)+td(s.remark)+
         '<td><span class="pill '+stc+'">'+escHtml(s.status)+'</span></td>'+
         '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-hedit="'+s.id+'">Edit</button>'+
         (admin?' <button class="btn-xs" style="background:var(--danger)" data-hdel="'+s.id+'">Remove</button>':'')+'</td></tr>';}).join('');
-    $('hist').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr>'+head.concat(['Actions']).map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+    $('hist').innerHTML=(admin?bulkBarHtml():'')+'<div style="overflow-x:auto"><table class="htable"><thead><tr>'+(admin?bulkHead():'')+head.concat(['Actions']).map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+    if(admin) attachBulk($('hist'),{table:'submissions',noun:'delivery record',sel:HSEL,ids:rows.map(s=>s.id),onDone:load});
     $('hist').querySelectorAll('[data-hedit]').forEach(b=>b.onclick=()=>{
       const s=ALL.find(x=>String(x.id)===b.getAttribute('data-hedit')); if(!s)return;
       editModal('Edit delivery record — '+(s.card_holder_name||''),[
@@ -977,13 +979,13 @@ function settingsHolder(){
     '<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Add a card</div>'+
       '<label>Customer name (card holder) *</label><input id="ch_name">'+
       '<label>Address</label><input id="ch_addr">'+
-      '<label>Creating in TWCMS (date)</label><input id="ch_date" type="date">'+
+      '<label>Creating in TWCMS (date) *</label><input id="ch_date" type="date">'+
       '<label>Reason for reissue</label><input id="ch_reason" placeholder="Leave blank for a new card">'+
       '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div>'+
     '<div id="cBar"></div><div id="chList"></div>';
   const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
   const colHead=['Customer name','Type','Address','Create date','Reason','Delivered by','Unit','Delivery date','Card status','Actions'];
-  let CARDS=[], LATEST={};
+  let CARDS=[], LATEST={}; const CSEL=new Set();
   // Filter bar is built once, so the selected conditions survive a Search/refresh.
   const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
   $('cBar').innerHTML='<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
@@ -1009,23 +1011,25 @@ function settingsHolder(){
   }
   function draw(){
     const rows=matchRows(); const esc=s=>(s==null||s===''?'—':escHtml(s));
-    $('chList').innerHTML=rows.length?'<div style="overflow-x:auto"><table class="htable"><thead><tr>'+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
+    $('chList').innerHTML=rows.length?(admin?bulkBarHtml():'')+'<div style="overflow-x:auto"><table class="htable"><thead><tr>'+(admin?bulkHead():'')+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
       rows.map(r=>{const l=LATEST[String(r.id)]||{}; const idx=CARDS.indexOf(r);
-        return '<tr><td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(fmtD(r.create_date))+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(fmtD(l.delivery_date))+'</td><td>'+esc(l.delivery_card_status)+'</td>'+
+        return '<tr>'+(admin?bulkCell(r.id,CSEL):'')+'<td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(fmtD(r.create_date))+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(fmtD(l.delivery_date))+'</td><td>'+esc(l.delivery_card_status)+'</td>'+
           '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button>'+
           (admin?' <button class="btn-xs" style="background:var(--danger)" data-delc="'+idx+'">Remove</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards match.</div>';
-    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date)',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue,hint:'Leave blank for a new card.'}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';v.create_date=v.create_date||null;v.reason_for_reissue=v.reason_for_reissue||null;const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return /duplicate|unique/i.test(error.message)?'This customer already has a new card — add a Reason for reissue.':error.message;load();});});
+    if(admin&&rows.length) attachBulk($('chList'),{table:'merchant_card_detail',noun:'card',sel:CSEL,ids:rows.map(r=>r.id),onDone:load,warn:'Their delivery records stay in History.'});
+    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date) *',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue,hint:'Leave blank for a new card.'}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';if(!v.create_date)return 'Creating in TWCMS (date) is required.';v.reason_for_reissue=v.reason_for_reissue||null;const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return /duplicate|unique/i.test(error.message)?'This customer already has a new card — add a Reason for reissue.':error.message;load();});});
     $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-delc')];
       confirmBox('Remove the card for '+r.cardholder_name+'? This cannot be undone.','Remove',async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',r.id);if(error)popup(error.message);else load();});});
   }
   async function load(){
     $('chList').innerHTML='<div class="empty">Loading…</div>';
     const [cd,su]=await Promise.all([
-      sb.from('merchant_card_detail').select('*').order('cardholder_name').limit(1000),
-      sb.from('submissions').select('card_ref,delivery_name,delivery_unit,delivery_date,delivery_card_status,created_at')
+      fetchAll('merchant_card_detail','*'),
+      fetchAll('submissions','id,card_ref,delivery_name,delivery_unit,delivery_date,delivery_card_status,created_at')
     ]);
+    if(cd.data) cd.data.sort((a,b)=>String(a.cardholder_name).localeCompare(String(b.cardholder_name)));
     if(cd.error){$('chList').innerHTML='<div class="empty">'+escHtml(cd.error.message)+'</div>';return;}
-    CARDS=cd.data||[]; LATEST=latestByRef(su.data);
+    CARDS=cd.data||[]; LATEST=latestByRef(su.data); { const live=new Set(CARDS.map(x=>String(x.id))); [...CSEL].forEach(id=>{ if(!live.has(id)) CSEL.delete(id); }); }
     const sel=$('cStatus'), have=new Set([...sel.options].map(o=>o.value));
     (su.data||[]).map(s=>s.delivery_card_status).filter(x=>x&&!have.has(x)).forEach(x=>{have.add(x);const o=document.createElement('option');o.textContent=x;sel.appendChild(o);});
     draw();
@@ -1039,6 +1043,7 @@ function settingsHolder(){
   renderUploader($('upWrap'),()=>load());
   $('ch_save').onclick=async()=>{const name=$('ch_name').value.trim();
     if(!name)return popup('Customer name is required.');
+    if(!$('ch_date').value)return popup('Creating in TWCMS (date) is required.');
     const row={cardholder_name:name,address:$('ch_addr').value.trim(),create_date:$('ch_date').value||null,reason_for_reissue:$('ch_reason').value.trim()||null};
     const {error}=await sb.from('merchant_card_detail').insert(row);
     if(error)popup(/duplicate|unique/i.test(error.message)?'This customer already has a new card — a new card can exist only once. For another card, add a Reason for reissue.':error.message);
@@ -1049,7 +1054,7 @@ function settingsHolder(){
 /* ---------- UPLOADER (reused inside Settings → Card Holder Name) ---------- */
 function renderUploader(host,onDone){
   host.innerHTML=
-    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), address, create_date (creating in TWCMS — DD-MMM-YY e.g. 17-Nov-26, or an Excel date), reason_for_reissue (blank = new). <b>Duplicate new cards are rejected</b> — rows whose customer already has a new card, or appears twice as a new card in the file.</p>'+
+    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), <b>create_date</b> (required; creating in TWCMS — DD-MMM-YY e.g. 17-Nov-26, or an Excel date), reason_for_reissue (blank = new). <b>Duplicate new cards are rejected</b> — rows whose customer already has a new card, or appears twice as a new card in the file.</p>'+
     '<input type="file" id="f_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
     '<div id="upPrev"></div>'+
     '<button class="primary" id="upBtn" disabled>Upload &amp; merge</button>'+
@@ -1073,6 +1078,9 @@ function renderUploader(host,onDone){
       parsed=raw.map((row,i)=>{const o={_row:i+2};Object.keys(row).forEach(k=>{const n=norm(k);const f=MAP[n]||(FIELDS.indexOf(n)>=0?n:null);if(!f)return;let v=row[k];
         if(f==='create_date') v=fmtDate(v); else v=(v instanceof Date)?fmtDate(v):String(v).trim(); o[f]=v;});return o;}).filter(o=>o.cardholder_name);
       if(!parsed.length){ popup('No valid rows found. The file needs a cardholder_name (customer name) column.'); return; }
+      { const hasDate=Object.keys(raw[0]||{}).some(k=>{const n=norm(k);return (MAP[n]||n)==='create_date';});
+        if(!hasDate){ parsed=null; $('f_file').value=''; $('upPrev').innerHTML=''; $('upBtn').disabled=true;
+          popup('This file has no create date column, so nothing was uploaded. Add a column named create_date (or "Create date" / "Creating in TWCMS") with a date for every card, e.g. 17-Nov-26.'); return; } }
       $('upPrev').innerHTML='<div class="card" style="margin-top:10px">'+kv('Rows found',parsed.length)+kv('Sample',parsed.slice(0,3).map(p=>p.cardholder_name+(p.reason_for_reissue?' (reissue)':' (new)')).join(', '))+'</div>';
       $('upBtn').disabled=false;
     }catch(err){ popup('Could not read the file: '+err.message); } };
@@ -1091,6 +1099,7 @@ function renderUploader(host,onDone){
     const seenInFile=new Map(), toInsert=[], rejects=[];
     parsed.forEach(p=>{
       const reason=(p.reason_for_reissue&&String(p.reason_for_reissue).trim())||null, key=nameKey(p.cardholder_name), name=String(p.cardholder_name).trim().replace(/\s+/g,' ');
+      if(!p.create_date){ rejects.push([p._row,name,'Create date is missing — every card needs a create date','',null]); return; }
       if(p.create_date && !isISO(p.create_date)){ rejects.push([p._row,name,'Create date "'+p.create_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)',p.create_date,null]); return; }
       if(!reason){
         if(existingNew.has(key)){ rejects.push([p._row,name,'Duplicate — this customer already has a new card in Card Data',p.create_date,existingNew.get(key)]); return; }
@@ -1409,6 +1418,59 @@ function capsOnly(inp){
   if(!inp.placeholder) inp.placeholder='CAPITAL LETTERS ONLY';
   inp.addEventListener('input',()=>{ const v=inp.value, nv=capsName(v); if(v!==nv){ const pos=Math.max(0,(inp.selectionStart||nv.length)-(v.length-nv.length)); inp.value=nv; try{inp.setSelectionRange(pos,pos);}catch(e){} } });
 }
+/* ---------- Bulk remove (admins): checkboxes + "Remove selected" ----------
+   cfg = {table, noun, sel:Set of ids, ids:[ids in the current view], onDone} */
+const bulkCell=(id,sel)=>'<td style="width:34px"><input type="checkbox" class="bsel" data-id="'+escHtml(id)+'"'+(sel.has(String(id))?' checked':'')+' style="width:16px;height:16px"></td>';
+const bulkHead=()=>'<th style="width:34px"><input type="checkbox" class="bsel-all" title="Select all rows that match the filter" style="width:16px;height:16px"></th>';
+function bulkBarHtml(){ return '<div class="bulkbar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.3);border-radius:9px;padding:8px 10px;margin-bottom:8px">'+
+  '<b class="bcount"></b><span class="hint bnote" style="margin:0"></span>'+
+  '<button class="btn-xs bclear" style="background:#6b7280">Clear selection</button>'+
+  '<button class="btn-xs bdel" style="background:var(--danger)">🗑 Remove selected</button></div>'; }
+function attachBulk(host,cfg){
+  const bar=host.querySelector('.bulkbar'), all=host.querySelector('.bsel-all'), boxes=[...host.querySelectorAll('.bsel')];
+  const view=cfg.ids.map(String);
+  function sync(){
+    const n=cfg.sel.size, inView=view.filter(id=>cfg.sel.has(id)).length;
+    bar.style.display=n?'flex':'none';
+    bar.querySelector('.bcount').textContent=n+' '+cfg.noun+(n===1?'':'s')+' selected';
+    bar.querySelector('.bnote').textContent=inView<view.length&&n?'· '+view.length+' match the filter':'';
+    if(all){ all.checked=view.length>0&&inView===view.length; all.indeterminate=inView>0&&inView<view.length; }
+  }
+  boxes.forEach(b=>b.onchange=()=>{ const id=b.getAttribute('data-id'); b.checked?cfg.sel.add(id):cfg.sel.delete(id); sync(); });
+  if(all) all.onchange=()=>{ if(all.checked) view.forEach(id=>cfg.sel.add(id)); else view.forEach(id=>cfg.sel.delete(id)); boxes.forEach(b=>b.checked=all.checked); sync(); };
+  bar.querySelector('.bclear').onclick=()=>{ cfg.sel.clear(); boxes.forEach(b=>b.checked=false); sync(); };
+  bar.querySelector('.bdel').onclick=()=>{
+    const ids=[...cfg.sel], n=ids.length; if(!n) return;
+    const go=async()=>{
+      let done=0, err=null;
+      for(let i=0;i<ids.length;i+=200){ const chunk=ids.slice(i,i+200);
+        const {error}=await sb.from(cfg.table).delete().in('id',chunk);
+        if(error){ err=error; break; } done+=chunk.length; }
+      cfg.sel.clear();
+      popup(err? 'Removed '+done+' of '+n+'. Stopped: '+err.message : n+' '+cfg.noun+(n===1?'':'s')+' removed.');
+      cfg.onDone();
+    };
+    const msg='Remove '+n+' '+cfg.noun+(n===1?'':'s')+'? This cannot be undone.'+(cfg.warn?' '+cfg.warn:'');
+    if(n>=20) confirmTyped(msg,'DELETE',go); else confirmBox(msg,'Remove '+n,go);
+  };
+  sync();
+}
+/* confirmation that requires typing a word (used for large removals) */
+function confirmTyped(msg,word,onYes){
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2600;padding:20px';
+  o.innerHTML='<div style="background:#fff;color:#1a1a1a;border-radius:12px;max-width:380px;width:100%;padding:18px">'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:6px">⚠️ Confirm removal</div><div id="ctMsg" style="font-size:14px;line-height:1.5;margin-bottom:10px"></div>'+
+    '<div style="font-size:13px;margin-bottom:4px">Type <b>'+word+'</b> to confirm:</div><input id="ctIn" autocomplete="off" style="background:#fff;color:#1a1a1a">'+
+    '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn-sm" id="ctNo" style="flex:1;background:#6b7280;padding:10px">Cancel</button><button class="btn-sm" id="ctYes" disabled style="flex:1;background:var(--danger);padding:10px;opacity:.5">Remove</button></div></div>';
+  document.body.appendChild(o);
+  o.querySelector('#ctMsg').textContent=msg;
+  const inp=o.querySelector('#ctIn'), yes=o.querySelector('#ctYes');
+  inp.oninput=()=>{ const ok=inp.value.trim().toUpperCase()===word; yes.disabled=!ok; yes.style.opacity=ok?1:.5; };
+  o.querySelector('#ctNo').onclick=()=>o.remove();
+  yes.onclick=async()=>{ o.remove(); await onYes(); };
+  setTimeout(()=>inp.focus(),50);
+}
 /* Yes/No confirmation box (used before Remove / Deactivate) */
 function confirmBox(msg,yesLabel,onYes){
   const o=document.createElement('div');
@@ -1507,7 +1569,7 @@ function makeMockClient(){
   const db={merchant_card_detail:cards, submissions:subs, profiles:profiles, ref_branch:ref_branch, ref_unit:ref_unit, ref_card_status:ref_card_status};
   function run(st){
     try{
-      if(st.op==='delete'){ const a=db[st.table]; if(a){for(let i=a.length-1;i>=0;i--){if(st.filters.every(([c,v])=>String(a[i][c])===String(v)))a.splice(i,1);}} return {error:null}; }
+      if(st.op==='delete'){ const a=db[st.table]; if(a){for(let i=a.length-1;i>=0;i--){if(st.filters.every(([c,v])=>String(a[i][c])===String(v))&&(st.ins||[]).every(([c,vs])=>vs.includes(String(a[i][c]))))a.splice(i,1);}} return {error:null}; }
       if(st.op==='upsert'){
         const arr=Array.isArray(st.payload)?st.payload:[st.payload];
         if(st.table==='merchant_card_detail') arr.forEach(row=>{const i=row.id!=null?cards.findIndex(c=>String(c.id)===String(row.id)):-1;if(i>=0)Object.assign(cards[i],row);else cards.push(Object.assign({id:'x'+Date.now()+Math.floor(Math.random()*1000)},row));});
