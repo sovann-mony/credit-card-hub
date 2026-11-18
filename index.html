@@ -281,6 +281,11 @@ if (SUPABASE_URL.startsWith('http') && !SUPABASE_ANON_KEY.startsWith('YOUR_')) {
 }
 
 const $ = id => document.getElementById(id);
+const isHold=v=>String(v==null?'':v).trim().toLowerCase()==='on hold';
+const normTxt=v=>String(v==null?'':v).trim().replace(/\s+/g,' ');
+const localISO=v=>{ if(!v) return ''; const d=new Date(v); if(isNaN(d)) return String(v).slice(0,10); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+/* date a delivery record is counted on: On Hold = the day it was submitted; otherwise the delivery date */
+const recDate=r=>isHold(r.delivery_card_status)?localISO(r.created_at):(r.delivery_date||'');
 function escHtml(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function opts(list){ return list.map(o=>'<option>'+o+'</option>').join(''); }
 
@@ -469,8 +474,8 @@ function submitSingle(host){
     lbl(F.staff)+'<input id="f_staff" inputmode="numeric" placeholder="Numbers only">'+
     lbl(F.unit)+'<select id="f_unit"><option value="">Select…</option>'+opts(OPTIONS.unit)+'<option value="__other">Other…</option></select>'+
       '<input id="f_unit_other" placeholder="Enter unit / team" style="display:none;margin-top:6px">'+
-    lbl(F.date)+'<input id="f_date" type="date">'+
     lbl(F.status)+'<select id="f_status"><option value="">Select…</option>'+opts(OPTIONS.cardStatus)+'</select>'+
+    '<label id="f_date_lbl">'+F.date[0]+' <span class="req" id="f_date_req">*</span><span class="km">'+F.date[1]+'</span><span class="km" id="f_date_opt" style="display:none;color:var(--warn)">Optional when the status is On Hold</span></label><input id="f_date" type="date">'+
     '<label>Remark <span class="km">កំណត់សម្គាល់</span></label><textarea id="f_remark" rows="2" placeholder="Optional"></textarea>'+
     '<button class="primary" id="subBtn">Submit</button><div class="msg" id="subMsg"></div>'+
     '<p class="hint">Pick the card holder from the search list — only names in the uploaded data can be submitted, and each card can be submitted once.</p>';
@@ -512,6 +517,7 @@ function submitSingle(host){
   comboBox($('f_branch'),$('f_branch_list'),()=>OPTIONS.branch);
   capsOnly($('f_dname'));
   $('f_unit').onchange=function(){$('f_unit_other').style.display=this.value==='__other'?'block':'none';};
+  $('f_status').addEventListener('change',function(){ const h=isHold(this.value); $('f_date_req').style.display=h?'none':''; $('f_date_opt').style.display=h?'block':'none'; });
   $('subBtn').onclick=async function(){
     if(!selectedCard){ popup('Card holder name does not match the existing data. Please pick a valid card holder from the list.'); return; }
     const branch=$('f_branch').value.trim();
@@ -522,8 +528,9 @@ function submitSingle(host){
       delivery_unit:unit, delivery_date:$('f_date').value||null, delivery_card_status:$('f_status').value,
       remark:$('f_remark').value.trim()||null
     };
-    for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status'])
-      if(!payload[k]){ popup('Please fill in all required information before submitting.'); return; }
+    for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status']){
+      if(k==='delivery_date' && isHold(payload.delivery_card_status)) continue;
+      if(!payload[k]){ popup('Please fill in all required information before submitting.'); return; } }
     if(!/^\d+$/.test(payload.branch_code)){ popup('Branch Code must be a number.'); return; }
     payload.delivery_name=capsName(payload.delivery_name).trim();
     if(!NAME_CAPS_RE.test(payload.delivery_name)){ popup('Delivery Name must be in CAPITAL letters only (A–Z and spaces).'); return; }
@@ -611,13 +618,15 @@ function submitUploader(host){
       if(!prevInFile && lsub && String(lsub.delivery_card_status||'').trim().toLowerCase()!=='on hold'){
         F('Duplicate — this card was already submitted (only "On Hold" cards can be submitted again)',
           'Earlier submission: '+(lsub.delivery_card_status||'—')+' · by '+(lsub.delivery_name||'—')+' · delivery date '+(fmtD(lsub.delivery_date)||'—')+' · submitted '+fmtD(lsub.created_at)); continue; }
-      const miss=reqd.filter(k=>!p[k]); if(miss.length){ F('Missing: '+miss.join(', ')); continue; }
+      const hold=isHold(p.delivery_card_status);
+      const miss=reqd.filter(k=>!p[k]&&!(k==='delivery_date'&&hold)); if(miss.length){ F('Missing: '+miss.join(', ')); continue; }
+      if(!p.delivery_date) p.delivery_date=null;
       if(!/^\d+$/.test(String(p.branch_code))){ F('Branch Code must be a number'); continue; }
       p.delivery_name=String(p.delivery_name).trim().replace(/\s+/g,' ').toUpperCase();
       if(!NAME_CAPS_RE.test(p.delivery_name)){ F('Delivery Name "'+p.delivery_name+'" must be CAPITAL letters only (A–Z and spaces)'); continue; }
       if(!/^\d+$/.test(String(p.staff_id))){ F('Staff ID must be a number'); continue; }
-      if(!isISO(p.delivery_date)){ F('Delivery Date "'+p.delivery_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)'); continue; }
-      if(card.create_date && p.delivery_date < card.create_date){ F('Delivery Date earlier than card create date ('+fmtD(card.create_date)+')'); continue; }
+      if(p.delivery_date && !isISO(p.delivery_date)){ F('Delivery Date "'+p.delivery_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)'); continue; }
+      if(card.create_date && p.delivery_date && p.delivery_date < card.create_date){ F('Delivery Date earlier than card create date ('+fmtD(card.create_date)+')'); continue; }
       if(String(p.delivery_card_status).trim().toLowerCase()!=='delivered' && !(p.remark&&String(p.remark).trim())){ F('Remark required when status is not Delivered'); continue; }
       const payload={card_ref:String(card.id),card_holder_name:card.cardholder_name,branch_code:String(p.branch_code),delivery_name:String(p.delivery_name),staff_id:String(p.staff_id),delivery_unit:String(p.delivery_unit),delivery_date:p.delivery_date,delivery_card_status:String(p.delivery_card_status),remark:(p.remark&&String(p.remark).trim())||null};
       const {error}=await sb.from('submissions').insert(payload);
@@ -641,11 +650,12 @@ async function viewHistory(){
   $('main').innerHTML='<h2>History</h2><div id="histBar"></div><div id="hist"><div class="empty">Loading…</div></div>';
   let ALL=[]; const HSEL=new Set();
   // Filter bar is built once; the lists combine the Settings options with values already used.
-  $('histBar').innerHTML=filterBar('h',[...new Set(OPTIONS.unit)].sort(),[...new Set(OPTIONS.cardStatus)].sort());
+  const uniq=a=>{const m=new Map();(a||[]).forEach(v=>{const t=normTxt(v);if(t&&!m.has(t.toLowerCase()))m.set(t.toLowerCase(),t);});return [...m.values()].sort((x,y)=>x.localeCompare(y));};
+  $('histBar').innerHTML=filterBar('h',uniq(OPTIONS.unit),uniq(OPTIONS.cardStatus));
   const head=['Date','Card holder','Delivery name','Staff ID','Branch','Unit','Delivery date','Card status','Remark','Status'];
   const td=v=>'<td>'+(v==null||v===''?'—':escHtml(v))+'</td>';
-  function addMissing(selId,vals){ const sel=$(selId); const have=new Set([...sel.options].map(o=>o.value));
-    vals.filter(v=>v&&!have.has(v)).forEach(v=>{const o=document.createElement('option');o.textContent=v;sel.appendChild(o);}); }
+  function addMissing(selId,vals){ const sel=$(selId); const have=new Set([...sel.options].map(o=>normTxt(o.value).toLowerCase()));
+    vals.forEach(v=>{ const t=normTxt(v), k=t.toLowerCase(); if(!t||have.has(k)) return; have.add(k); const o=document.createElement('option');o.textContent=t;sel.appendChild(o); }); }
   async function load(){
     $('hist').innerHTML='<div class="empty">Loading…</div>';
     const {data,error}=await fetchAll('submissions','*');
@@ -656,12 +666,14 @@ async function viewHistory(){
     render();
   }
   function current(){
-    const f=$('hFrom').value,t=$('hTo').value,u=$('hUnit').value,st=$('hStatus').value;
+    const f=$('hFrom').value,t=$('hTo').value,u=normTxt($('hUnit').value).toLowerCase(),st=normTxt($('hStatus').value).toLowerCase(),q=normTxt($('hHolder').value).toLowerCase();
     return ALL.filter(s=>{
-      if(f && (!s.delivery_date||s.delivery_date<f))return false;
-      if(t && (!s.delivery_date||s.delivery_date>t))return false;
-      if(u && String(s.delivery_unit||'')!==u)return false;
-      if(st && String(s.delivery_card_status||'')!==st)return false;
+      if(q && !normTxt(s.card_holder_name).toLowerCase().includes(q))return false;
+      const d=recDate(s);
+      if(f && (!d||d<f))return false;
+      if(t && (!d||d>t))return false;
+      if(u && normTxt(s.delivery_unit).toLowerCase()!==u)return false;
+      if(st && normTxt(s.delivery_card_status).toLowerCase()!==st)return false;
       return true;
     });
   }
@@ -685,11 +697,12 @@ async function viewHistory(){
         {key:'delivery_name',label:'Delivery Name (CAPITAL letters only)',value:s.delivery_name,caps:true},
         {key:'staff_id',label:'Staff ID (numbers only)',value:s.staff_id},
         {key:'delivery_unit',label:'Delivery by (Unit)',value:s.delivery_unit,type:'select',options:OPTIONS.unit},
-        {key:'delivery_date',label:'Delivery Date',value:s.delivery_date,type:'date'},
         {key:'delivery_card_status',label:'Credit Card Status',value:s.delivery_card_status,type:'select',options:OPTIONS.cardStatus},
+        {key:'delivery_date',label:'Delivery Date',value:s.delivery_date,type:'date',hint:'Optional when the status is On Hold.'},
         {key:'remark',label:'Remark',value:s.remark,type:'textarea',hint:'Required when the status is not "Delivered".'}
       ],async v=>{
-        for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status']) if(!v[k]) return 'Please fill in all required information.';
+        for(const k of ['branch_code','delivery_name','staff_id','delivery_unit','delivery_date','delivery_card_status']){ if(k==='delivery_date'&&isHold(v.delivery_card_status)) continue; if(!v[k]) return 'Please fill in all required information.'; }
+        if(!v.delivery_date) v.delivery_date=null;
         if(!/^\d+$/.test(v.branch_code)) return 'Branch Code must be a number.';
         v.delivery_name=capsName(v.delivery_name).trim();
         if(!NAME_CAPS_RE.test(v.delivery_name)) return 'Delivery Name must be in CAPITAL letters only (A–Z and spaces).';
@@ -711,8 +724,8 @@ async function viewHistory(){
   }
   // Conditions are applied when Search is clicked (Search also reloads the latest data).
   $('hSearch').onclick=load;
-  ['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
-  $('hClear').onclick=()=>{['hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');load();};
+  ['hHolder','hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
+  $('hClear').onclick=()=>{['hHolder','hFrom','hTo','hUnit','hStatus'].forEach(id=>$(id).value='');load();};
   $('hExport').onclick=()=>{const rows=current().map(s=>[fmtD(s.created_at),s.card_holder_name,s.delivery_name,s.staff_id,s.branch_code,s.delivery_unit,fmtD(s.delivery_date),s.delivery_card_status,s.remark,s.status]);
     if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('history.xlsx',head,rows);};
   load();
@@ -782,7 +795,7 @@ function dashRender(){
 
   const LATEST=latestByRef(st.subs);
   const cards=st.cards.filter(r=>inRange(r.create_date));
-  const subs=st.subs.filter(r=>inRange(r.delivery_date));
+  const subs=st.subs.filter(r=>inRange(recDate(r)));
   const isNew=r=>!(r.reason_for_reissue&&String(r.reason_for_reissue).trim());
   const stateOf=r=>{ const l=LATEST[String(r.id)]; if(!l) return 'Not yet submitted'; const k=lc(l.delivery_card_status);
     return k==='delivered'?'Delivered':k==='on hold'?'On Hold':k==='not delivered'?'Not Delivered':(l.delivery_card_status||'Other'); };
@@ -794,11 +807,13 @@ function dashRender(){
   const delivered=byState['Delivered']||0, pending=cards.length-delivered;
   const tile=(n,l,sub,col,ic,ratio)=>'<div class="kpi" style="--k:'+col+'"><div class="ic">'+ic+'</div><div class="n">'+n.toLocaleString()+'</div><div class="l">'+l+'</div>'+(sub?'<div class="s">'+sub+'</div>':'')+
     (ratio!=null?'<div class="bar"><i style="width:'+Math.round(ratio*100)+'%"></i></div>':'')+'</div>';
-  const share=n=>cards.length?n/cards.length:0, hold=byState['On Hold']||0;
+  const share=n=>cards.length?n/cards.length:0;
+  // On Hold = cards whose latest record is On Hold, counted by the date that record was submitted
+  const hold=st.cards.filter(r=>{const l=LATEST[String(r.id)];return l&&isHold(l.delivery_card_status)&&inRange(localISO(l.created_at));}).length;
   $('dKpi').innerHTML=tile(cards.length,'Total cards','created in period','var(--accent)','💳')+tile(cards.filter(isNew).length,'New cards',pct(cards.filter(isNew).length,cards.length)+' of cards',P.s1,'🆕')+
     tile(cards.filter(r=>!isNew(r)).length,'Reissues',pct(cards.filter(r=>!isNew(r)).length,cards.length)+' of cards',P.s4,'🔁')+
     tile(delivered,'Delivered',pct(delivered,cards.length)+' of cards',P.good,'✅',share(delivered))+tile(pending,'Pending','not delivered yet',P.serious,'⏳',share(pending))+
-    tile(hold,'On Hold',pct(hold,cards.length)+' of cards',P.warn,'⏸',share(hold))+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
+    tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
 
   // ---------- layout ----------
   const DC={c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
@@ -876,7 +891,7 @@ function dashRender(){
 
   // 4) by unit — one stacked bar per delivery status (Delivered, On Hold, …)
   const stName=s=>{const k=lc(s.delivery_card_status); return k==='delivered'?'Delivered':k==='on hold'?'On Hold':k==='not delivered'?'Not Delivered':(s.delivery_card_status||'(no status)');};
-  const U={}, stSeen={}; subs.forEach(s=>{ const u=s.delivery_unit||'(none)', k=stName(s); U[u]=U[u]||{t:0,d:0}; U[u][k]=(U[u][k]||0)+1; U[u].t++; if(k==='Delivered')U[u].d++; stSeen[k]=1; });
+  const U={}, stSeen={}; subs.forEach(s=>{ const u=normTxt(s.delivery_unit)||'(none)', k=stName(s); U[u]=U[u]||{t:0,d:0}; U[u][k]=(U[u][k]||0)+1; U[u].t++; if(k==='Delivered')U[u].d++; stSeen[k]=1; });
   const uStates=order.filter(k=>stSeen[k]).concat(Object.keys(stSeen).filter(k=>!order.includes(k)).sort());
   const units=Object.keys(U).sort((a,b)=>U[b].t-U[a].t);
   EXP.c4={h:['Unit'].concat(uStates,['Total','Delivered rate']),r:units.map(u=>[u].concat(uStates.map(k=>U[u][k]||0),[U[u].t,pct(U[u].d,U[u].t)]))};
@@ -1558,6 +1573,7 @@ function filterBar(p,units,statuses){
   const u=(units||[]).map(x=>'<option>'+escHtml(x)+'</option>').join('');
   const s=(statuses||[]).map(x=>'<option>'+escHtml(x)+'</option>').join('');
   return '<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
+    '<div style="display:flex;flex-direction:column;flex:1;min-width:200px"><label class="hint" style="margin:0 0 2px">Card holder</label><input id="'+p+'Holder" placeholder="Search card holder…"></div>'+
     '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">From (delivery date)</label><input type="date" id="'+p+'From" style="width:150px"></div>'+
     '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">To (delivery date)</label><input type="date" id="'+p+'To" style="width:150px"></div>'+
     '<div style="display:flex;flex-direction:column"><label class="hint" style="margin:0 0 2px">Unit</label><select id="'+p+'Unit" style="width:150px"><option value="">All</option>'+u+'</select></div>'+
