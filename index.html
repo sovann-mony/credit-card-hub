@@ -978,7 +978,7 @@ function settingsHolder(){
   body.innerHTML='<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Upload daily card data</div><div id="upWrap"></div></div>'+
     '<div class="card" style="padding:12px"><div class="k" style="font-weight:700;margin-bottom:6px">Add a card</div>'+
       '<label>Customer name (card holder) *</label><input id="ch_name">'+
-      '<label>Address</label><input id="ch_addr">'+
+      '<label>Address *</label><input id="ch_addr">'+
       '<label>Creating in TWCMS (date) *</label><input id="ch_date" type="date">'+
       '<label>Reason for reissue</label><input id="ch_reason" placeholder="Leave blank for a new card">'+
       '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div>'+
@@ -1017,7 +1017,7 @@ function settingsHolder(){
           '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button>'+
           (admin?' <button class="btn-xs" style="background:var(--danger)" data-delc="'+idx+'">Remove</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards match.</div>';
     if(admin&&rows.length) attachBulk($('chList'),{table:'merchant_card_detail',noun:'card',sel:CSEL,ids:rows.map(r=>r.id),onDone:load,warn:'Their delivery records stay in History.'});
-    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address',value:r.address},{key:'create_date',label:'Creating in TWCMS (date) *',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue,hint:'Leave blank for a new card.'}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';if(!v.create_date)return 'Creating in TWCMS (date) is required.';v.reason_for_reissue=v.reason_for_reissue||null;const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return /duplicate|unique/i.test(error.message)?'This customer already has a new card — add a Reason for reissue.':error.message;load();});});
+    $('chList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-edit')];editModal('Edit card',[{key:'cardholder_name',label:'Customer name (card holder)',value:r.cardholder_name},{key:'address',label:'Address *',value:r.address},{key:'create_date',label:'Creating in TWCMS (date) *',value:r.create_date,type:'date'},{key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue,hint:'Leave blank for a new card.'}],async v=>{if(!v.cardholder_name)return 'Customer name is required.';if(!(v.address||'').trim())return 'Address is required.';if(!v.create_date)return 'Creating in TWCMS (date) is required.';v.reason_for_reissue=v.reason_for_reissue||null;const {error}=await sb.from('merchant_card_detail').update(v).eq('id',r.id);if(error)return /duplicate|unique/i.test(error.message)?'This customer already has a new card — add a Reason for reissue.':error.message;load();});});
     $('chList').querySelectorAll('[data-delc]').forEach(b=>b.onclick=()=>{const r=CARDS[+b.getAttribute('data-delc')];
       confirmBox('Remove the card for '+r.cardholder_name+'? This cannot be undone.','Remove',async()=>{const {error}=await sb.from('merchant_card_detail').delete().eq('id',r.id);if(error)popup(error.message);else load();});});
   }
@@ -1043,6 +1043,7 @@ function settingsHolder(){
   renderUploader($('upWrap'),()=>load());
   $('ch_save').onclick=async()=>{const name=$('ch_name').value.trim();
     if(!name)return popup('Customer name is required.');
+    if(!$('ch_addr').value.trim())return popup('Address is required.');
     if(!$('ch_date').value)return popup('Creating in TWCMS (date) is required.');
     const row={cardholder_name:name,address:$('ch_addr').value.trim(),create_date:$('ch_date').value||null,reason_for_reissue:$('ch_reason').value.trim()||null};
     const {error}=await sb.from('merchant_card_detail').insert(row);
@@ -1054,7 +1055,7 @@ function settingsHolder(){
 /* ---------- UPLOADER (reused inside Settings → Card Holder Name) ---------- */
 function renderUploader(host,onDone){
   host.innerHTML=
-    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), <b>create_date</b> (required; creating in TWCMS — DD-MMM-YY e.g. 17-Nov-26, or an Excel date), reason_for_reissue (blank = new). <b>Duplicate new cards are rejected</b> — rows whose customer already has a new card, or appears twice as a new card in the file.</p>'+
+    '<p class="hint">Upload the daily card list (CSV or Excel). Each row adds a card. A customer can have one <b>new</b> card (blank reason) plus any number of <b>reissues</b>. Columns: <b>cardholder_name / customer name</b> (required), <b>address</b> (required), <b>create_date</b> (required; creating in TWCMS — DD-MMM-YY e.g. 17-Nov-26, or an Excel date), reason_for_reissue (blank = new). <b>Duplicate new cards are rejected</b> — rows whose customer already has a new card, or appears twice as a new card in the file.</p>'+
     '<input type="file" id="f_file" accept=".csv,.xlsx,.xls" style="margin-top:6px">'+
     '<div id="upPrev"></div>'+
     '<button class="primary" id="upBtn" disabled>Upload &amp; merge</button>'+
@@ -1078,6 +1079,9 @@ function renderUploader(host,onDone){
       parsed=raw.map((row,i)=>{const o={_row:i+2};Object.keys(row).forEach(k=>{const n=norm(k);const f=MAP[n]||(FIELDS.indexOf(n)>=0?n:null);if(!f)return;let v=row[k];
         if(f==='create_date') v=fmtDate(v); else v=(v instanceof Date)?fmtDate(v):String(v).trim(); o[f]=v;});return o;}).filter(o=>o.cardholder_name);
       if(!parsed.length){ popup('No valid rows found. The file needs a cardholder_name (customer name) column.'); return; }
+      { const hasAddr=Object.keys(raw[0]||{}).some(k=>{const n=norm(k);return (MAP[n]||n)==='address';});
+        if(!hasAddr){ parsed=null; $('f_file').value=''; $('upPrev').innerHTML=''; $('upBtn').disabled=true;
+          popup('This file has no address column, so nothing was uploaded. Add a column named address (or "Address" / "Location") with an address for every card.'); return; } }
       { const hasDate=Object.keys(raw[0]||{}).some(k=>{const n=norm(k);return (MAP[n]||n)==='create_date';});
         if(!hasDate){ parsed=null; $('f_file').value=''; $('upPrev').innerHTML=''; $('upBtn').disabled=true;
           popup('This file has no create date column, so nothing was uploaded. Add a column named create_date (or "Create date" / "Creating in TWCMS") with a date for every card, e.g. 17-Nov-26.'); return; } }
@@ -1099,6 +1103,7 @@ function renderUploader(host,onDone){
     const seenInFile=new Map(), toInsert=[], rejects=[];
     parsed.forEach(p=>{
       const reason=(p.reason_for_reissue&&String(p.reason_for_reissue).trim())||null, key=nameKey(p.cardholder_name), name=String(p.cardholder_name).trim().replace(/\s+/g,' ');
+      if(!p.address){ rejects.push([p._row,name,'Address is missing — every card needs an address',p.create_date||'',null]); return; }
       if(!p.create_date){ rejects.push([p._row,name,'Create date is missing — every card needs a create date','',null]); return; }
       if(p.create_date && !isISO(p.create_date)){ rejects.push([p._row,name,'Create date "'+p.create_date+'" is not a valid date (use DD-MMM-YY, e.g. 17-Nov-26)',p.create_date,null]); return; }
       if(!reason){
