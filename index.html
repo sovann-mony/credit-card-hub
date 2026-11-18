@@ -826,10 +826,11 @@ function dashRender(){
     tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
 
   // ---------- layout ----------
-  const DC={c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
+  const DC={c0:P.s2,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
   const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   $('dGrid').innerHTML=
+    box('c0','Cards created vs Delivered','Created = cards by create month · Delivered = records with status Delivered, by delivery month',true)+
     box('c1','Delivery status','Cards created in the period, by latest delivery status')+
     box('c2','Pending cards by age','Days since the card was created (not yet delivered)')+
     box('c3','Deliveries over time','Records with status Delivered, by delivery date',true)+
@@ -842,9 +843,43 @@ function dashRender(){
   const empty=(id,msg)=>{ $(id).innerHTML='<div class="empty" style="padding:30px 0">'+(msg||'No data for this period.')+'</div>'; };
   Chart.defaults.animation=false; Chart.defaults.font.family=getComputedStyle(document.body).fontFamily; Chart.defaults.font.size=12; Chart.defaults.color=P.muted;
   const axis={grid:{color:P.grid,drawTicks:false},border:{display:false},ticks:{color:P.muted,padding:6}};
-  const tt={backgroundColor:P.surface,titleColor:P.text,bodyColor:P.text,borderColor:P.grid,borderWidth:1,padding:10,boxPadding:4,usePointStyle:true};
+  const tt={backgroundColor:P.surface,titleColor:P.text,bodyColor:P.text,footerColor:P.muted,footerFont:{weight:'600'},borderColor:P.grid,borderWidth:1,padding:10,boxPadding:4,usePointStyle:true};
   const legend={position:'bottom',labels:{color:P.text,usePointStyle:true,pointStyle:'rectRounded',boxWidth:10,padding:14}};
   const bar=(color)=>({backgroundColor:color,borderRadius:4,borderSkipped:'start',maxBarThickness:34,borderColor:P.surface,borderWidth:{top:0,right:0,bottom:0,left:0}});
+
+  // 0) cards created (bars) vs delivered (line), by month of the chosen year
+  { const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const delivRecs=st.subs.filter(r=>lc(r.delivery_card_status)==='delivered'&&r.delivery_date);
+    const years=[...new Set(st.cards.map(r=>String(r.create_date||'').slice(0,4)).concat(delivRecs.map(r=>String(r.delivery_date).slice(0,4))).filter(y=>/^\d{4}$/.test(y)))].sort().reverse();
+    const nowY=String(new Date().getFullYear()); if(!years.includes(nowY)) years.unshift(nowY);
+    if(!DASH.year||!years.includes(DASH.year)) DASH.year=nowY;
+    const Y=DASH.year, cre=Array(12).fill(0), del=Array(12).fill(0);
+    st.cards.forEach(r=>{ const d=String(r.create_date||''); if(d.slice(0,4)===Y) cre[+d.slice(5,7)-1]++; });
+    delivRecs.forEach(r=>{ const d=String(r.delivery_date); if(d.slice(0,4)===Y) del[+d.slice(5,7)-1]++; });
+    let last=-1; for(let i=11;i>=0;i--) if(cre[i]||del[i]){ last=i; break; }
+    if(Y===nowY) last=Math.max(last,new Date().getMonth());
+    const n=last+1, totC=cre.reduce((a,b)=>a+b,0), totD=del.reduce((a,b)=>a+b,0);
+    const head=$('c0').previousElementSibling;
+    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none">'+years.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
+    $('dYear').onchange=function(){ DASH.year=this.value; dashRender(); };
+    EXP.c0={h:['Month','Cards created','Delivered','Delivered vs created'],r:MON.slice(0,Math.max(n,0)).map((m,i)=>[m+' '+Y,cre[i],del[i],pct(del[i],cre[i])]).concat([['Total '+Y,totC,totD,pct(totD,totC)]])};
+    const totals='<div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin:2px 0 10px">'+
+      '<div><div class="hint" style="margin:0">Total cards created ('+Y+')</div><div style="font-size:24px;font-weight:800;color:'+P.s2+'">'+totC.toLocaleString()+'</div></div>'+
+      '<div><div class="hint" style="margin:0">Total delivered ('+Y+')</div><div style="font-size:24px;font-weight:800;color:'+P.s1+'">'+totD.toLocaleString()+'</div></div>'+
+      '<div><div class="hint" style="margin:0">Delivered vs created</div><div style="font-size:24px;font-weight:800">'+pct(totD,totC)+'</div></div></div>';
+    if(!n||(!totC&&!totD)){ $('c0').innerHTML=totals+'<div class="empty" style="padding:30px 0">No cards or deliveries in '+Y+'.</div>'; }
+    else {
+      $('c0').innerHTML=totals+'<div style="position:relative;height:300px"><canvas></canvas></div>';
+      const ptLabels={id:'ptLabels',afterDatasetsDraw(ch){ const c=ch.ctx, meta=ch.getDatasetMeta(1); if(meta.hidden) return; c.save(); c.font='600 11px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
+        meta.data.forEach((pt,i)=>{ const v=ch.data.datasets[1].data[i]; if(v==null) return; c.fillText(v,pt.x,pt.y-10); }); c.restore(); }};
+      DASH.charts.push(new Chart($('c0').querySelector('canvas'),{type:'bar',plugins:[ptLabels],
+        data:{labels:MON.slice(0,n),datasets:[
+          {type:'bar',label:'Cards created',data:cre.slice(0,n),...bar(P.s2),maxBarThickness:46,order:2},
+          {type:'line',label:'Delivered',data:del.slice(0,n),borderColor:P.s1,backgroundColor:P.s1,borderWidth:2.5,cubicInterpolationMode:'monotone',pointRadius:4.5,pointHoverRadius:6,pointBorderColor:P.surface,pointBorderWidth:2,order:1}]},
+        options:{maintainAspectRatio:false,layout:{padding:{top:18}},interaction:{mode:'index',intersect:false},
+          scales:{x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
+          plugins:{legend:{...legend,position:'top',labels:{...legend.labels,sort:(a,b)=>a.datasetIndex-b.datasetIndex}},tooltip:{...tt,callbacks:{title:it=>it[0].label+' '+Y,footer:it=>{const i=it[0].dataIndex;return 'Delivered vs created: '+pct(del[i],cre[i]);}}}}}}));
+    } }
 
   // 1) status donut
   const order=['Delivered','On Hold','Not Delivered','Not yet submitted'];
@@ -948,7 +983,7 @@ function dashRender(){
       '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
 
   // Excel buttons
-  const names={c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  const names={c0:'created_vs_delivered',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
   $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
     if(!e||!e.r.length) return popup('Nothing to export for this period.');
     let rows=e.r; if(id==='c6'&&reasons.length){ rows=rows.concat([[],['Top reissue reasons','Cards']]).concat(reasons.map(x=>[x.label,x.c])); }
