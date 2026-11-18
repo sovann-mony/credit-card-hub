@@ -821,16 +821,16 @@ function dashRender(){
       options:{maintainAspectRatio:false,scales:{x:{...axis,grid:{display:false},ticks:{...axis.ticks,maxRotation:0,autoSkip:true,maxTicksLimit:12}},y:{...axis,beginAtZero:true,ticks:{...axis.ticks,precision:0}}},
         plugins:{legend:{display:false},tooltip:{...tt,callbacks:{title:it=>(gran==='week'?'Week of ':'')+it[0].label}}}}}));
 
-  // 4) by unit
-  const U={}; subs.forEach(s=>{ const u=s.delivery_unit||'(none)'; U[u]=U[u]||{d:0,n:0}; if(lc(s.delivery_card_status)==='delivered')U[u].d++; else U[u].n++; });
-  const units=Object.keys(U).sort((a,b)=>(U[b].d+U[b].n)-(U[a].d+U[a].n));
-  EXP.c4={h:['Unit','Delivered','Not delivered','Total','Delivered rate'],r:units.map(u=>[u,U[u].d,U[u].n,U[u].d+U[u].n,pct(U[u].d,U[u].d+U[u].n)])};
-  if(!units.length) empty('c4'); else
-    DASH.charts.push(new Chart(canvas('c4',Math.max(200,units.length*42+70)),{type:'bar',data:{labels:units,datasets:[
-        {label:'Delivered',data:units.map(u=>U[u].d),...bar(P.good)},
-        {label:'Not delivered',data:units.map(u=>U[u].n),...bar(P.crit),borderWidth:{top:0,right:0,bottom:0,left:2}}]},
+  // 4) by unit — one stacked bar per delivery status (Delivered, On Hold, …)
+  const stName=s=>{const k=lc(s.delivery_card_status); return k==='delivered'?'Delivered':k==='on hold'?'On Hold':k==='not delivered'?'Not Delivered':(s.delivery_card_status||'(no status)');};
+  const U={}, stSeen={}; subs.forEach(s=>{ const u=s.delivery_unit||'(none)', k=stName(s); U[u]=U[u]||{t:0,d:0}; U[u][k]=(U[u][k]||0)+1; U[u].t++; if(k==='Delivered')U[u].d++; stSeen[k]=1; });
+  const uStates=order.filter(k=>stSeen[k]).concat(Object.keys(stSeen).filter(k=>!order.includes(k)).sort());
+  const units=Object.keys(U).sort((a,b)=>U[b].t-U[a].t);
+  EXP.c4={h:['Unit'].concat(uStates,['Total','Delivered rate']),r:units.map(u=>[u].concat(uStates.map(k=>U[u][k]||0),[U[u].t,pct(U[u].d,U[u].t)]))};
+  if(!units.length) empty('c4'); else { let ui=0;
+    DASH.charts.push(new Chart(canvas('c4',Math.max(200,units.length*42+70)),{type:'bar',data:{labels:units,datasets:uStates.map((k,i)=>({label:k,data:units.map(u=>U[u][k]||0),...bar(stateColor(k)||extra[(ui++)%extra.length]),borderWidth:{top:0,right:0,bottom:0,left:i?2:0}}))},
       options:{indexAxis:'y',maintainAspectRatio:false,scales:{x:{...axis,stacked:true,beginAtZero:true,ticks:{...axis.ticks,precision:0}},y:{...axis,stacked:true,grid:{display:false}}},
-        plugins:{legend,tooltip:{...tt,mode:'index',callbacks:{footer:it=>{const u=units[it[0].dataIndex];return 'Total: '+(U[u].d+U[u].n)+' · Delivered rate: '+pct(U[u].d,U[u].d+U[u].n);}}}}}}));
+        plugins:{legend,tooltip:{...tt,mode:'index',callbacks:{footer:it=>{const u=units[it[0].dataIndex];return 'Total: '+U[u].t+' · Delivered rate: '+pct(U[u].d,U[u].t);}}}}}})); }
 
   // 5) top branches
   const B={}; subs.forEach(s=>{ const b=s.branch_code||'(none)'; B[b]=B[b]||{t:0,d:0}; B[b].t++; if(lc(s.delivery_card_status)==='delivered')B[b].d++; });
