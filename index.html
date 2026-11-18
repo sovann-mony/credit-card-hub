@@ -97,6 +97,8 @@
   .htable.act td{max-width:240px;overflow:hidden;text-overflow:ellipsis}
   .htable.act th:last-child,.htable.act td:last-child{position:sticky;right:0;z-index:1;background:var(--bg);max-width:none;overflow:visible;box-shadow:-8px 0 8px -8px rgba(0,0,0,.25)}
   .htable.act th:last-child{background:var(--card)}
+  .htable.act.wrap td{white-space:normal;overflow:visible;text-overflow:clip;min-width:70px;max-width:280px;word-break:break-word}
+  .htable.act.wrap td:first-child,.htable.act.wrap td:last-child{min-width:0;white-space:nowrap}
   .setTab{padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--text);font-weight:600;font-size:12.5px;cursor:pointer}
   .setTab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
   .banner{background:rgba(217,119,6,.12);color:var(--warn);padding:8px 14px;font-size:12px;text-align:center}
@@ -988,7 +990,8 @@ function settingsHolder(){
       '<button class="btn-sm" style="background:var(--accent);margin-top:10px;padding:9px 14px" id="ch_save">Add card</button></div>'+
     '<div id="cBar"></div><div id="chList"></div>';
   const tag=r=>(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'<span class="pill warn">Reissue</span>':'<span class="pill ok">New</span>';
-  const colHead=['Customer name','Type','Address','Create date','Reason','Delivered by','Unit','Delivery date','Card status','Actions'];
+  const colHead=['Customer name','Type','Address','Create date','Reason','Delivered by','Card status','Actions'];
+  const exportHead=['Customer name','Type','Address','Create date','Reason','Delivered by','Unit','Delivery date','Card status'];
   let CARDS=[], LATEST={}; const CSEL=new Set();
   // Filter bar is built once, so the selected conditions survive a Search/refresh.
   const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
@@ -1015,9 +1018,9 @@ function settingsHolder(){
   }
   function draw(){
     const rows=matchRows(); const esc=s=>(s==null||s===''?'—':escHtml(s));
-    $('chList').innerHTML=rows.length?(admin?bulkBarHtml():'')+'<div style="overflow-x:auto"><table class="htable act"><thead><tr>'+(admin?bulkHead():'')+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
+    $('chList').innerHTML=rows.length?(admin?bulkBarHtml():'')+'<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr>'+(admin?bulkHead():'')+colHead.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
       rows.map(r=>{const l=LATEST[String(r.id)]||{}; const idx=CARDS.indexOf(r);
-        return '<tr>'+(admin?bulkCell(r.id,CSEL):'')+'<td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(fmtD(r.create_date))+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_unit)+'</td><td>'+esc(fmtD(l.delivery_date))+'</td><td>'+esc(l.delivery_card_status)+'</td>'+
+        return '<tr>'+(admin?bulkCell(r.id,CSEL):'')+'<td>'+esc(r.cardholder_name)+'</td><td>'+tag(r)+'</td><td>'+esc(r.address)+'</td><td>'+esc(fmtD(r.create_date))+'</td><td>'+esc(r.reason_for_reissue)+'</td><td>'+esc(l.delivery_name)+'</td><td>'+esc(l.delivery_card_status)+'</td>'+
           '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-edit="'+idx+'">Edit</button>'+
           (admin?' <button class="btn-xs" style="background:var(--danger)" data-delc="'+idx+'">Remove</button>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No cards match.</div>';
     tipCells($('chList'));
@@ -1044,7 +1047,7 @@ function settingsHolder(){
   ['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
   $('cClear').onclick=()=>{['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).value='');load();};
   $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,fmtD(r.create_date),r.reason_for_reissue,l.delivery_name,l.delivery_unit,fmtD(l.delivery_date),l.delivery_card_status];});
-    if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',colHead.slice(0,-1),rows);};
+    if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',exportHead,rows);};
   renderUploader($('upWrap'),()=>load());
   $('ch_save').onclick=async()=>{const name=$('ch_name').value.trim();
     if(!name)return popup('Customer name is required.');
