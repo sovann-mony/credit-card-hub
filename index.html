@@ -228,6 +228,7 @@
         <a data-view="submit"    data-roles="officer,admin"><span class="ic">📝</span><span class="lb">Submit</span></a>
         <a data-view="history"   data-roles="officer,admin"><span class="ic">🕑</span><span class="lb">History</span></a>
         <a data-view="cards"     data-roles="officer,admin"><span class="ic">💳</span><span class="lb">Card Data</span></a>
+        <a data-view="onboarding" data-roles="officer,admin"><span class="ic">🧾</span><span class="lb">Onboarding</span></a>
         <a data-view="fees"      data-roles="officer,admin"><span class="ic">💰</span><span class="lb">Interest Rate</span></a>
         <a data-view="late"      data-roles="officer,admin"><span class="ic">⏰</span><span class="lb">Late Payment</span></a>
         <a data-view="dashboard" data-roles="officer,admin"><span class="ic">📊</span><span class="lb">Dashboard</span></a>
@@ -440,14 +441,14 @@ function setupNav(){
   });
   if(first) go(first.getAttribute('data-view'));
 }
-const PAGE_HERO={submit:['📝','#0f9d63','Record a card delivery — one at a time or by file'],history:['🕑','#6a52d9','Every delivery record, with filters and Excel export'],
+const PAGE_HERO={submit:['📝','#0f9d63','Record a card delivery — one at a time or by file'],history:['🕑','#6a52d9','Every delivery record, with filters and Excel export'],onboarding:['🧾','#0b8a6f','Cards created in TWCMS for MSD & MADD — new, re-issue and activation'],
   cards:['💳','#0e9aa7','Cards created in TWCMS and their latest delivery status'],fees:['💰','#2a78d6','Monthly Interest Fee & Late Payment Fee (USD)'],late:['⏰','#d03b3b','Merchants who paid late — negotiation, blocking and recovery'],profile:['👤','#d9822b','Your account details'],settings:['⚙️','#64748b','Users, branches, units and card statuses']};
 function pageHero(view,hostId){ const cfg=PAGE_HERO[view], m=$(hostId||'main'); if(!cfg||!m) return; const h=m.querySelector(':scope > h2'); if(!h||h.closest('.page-hero')) return;
   const box=document.createElement('div'); box.className='page-hero'; box.style.setProperty('--h2',cfg[1]);
   box.innerHTML='<h2><span class="pic">'+cfg[0]+'</span>'+escHtml(h.textContent)+'</h2><div class="sub">'+(hostId==='publicMain'?'Fill in the delivery details below, then tap Submit':cfg[2])+'</div>'; h.replaceWith(box); }
 function go(view){
   document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active',a.getAttribute('data-view')===view));
-  const r=({submit:viewSubmit,history:viewHistory,cards:viewCards,fees:viewFees,late:viewLate,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
+  const r=({submit:viewSubmit,history:viewHistory,onboarding:viewOnboarding,cards:viewCards,fees:viewFees,late:viewLate,dashboard:viewDashboard,profile:viewProfile,settings:viewSettings}[view])();
   pageHero(view); if(r&&r.then) r.then(()=>pageHero(view)).catch(()=>{});
 }
 
@@ -1049,7 +1050,234 @@ async function viewLate(){
   load();
 }
 
-/* ---------- DASHBOARD ---------- */
+/* ---------- ONBOARDING ---------- */
+/* Cards created in TWCMS for Department MSD & MADD.
+   TWO Status: C-Declared = not activated · 9-Closed = closed · anything else = activated.
+   Reason for reissue blank = new card. Same customer name + address = same person:
+   a person's new card is counted once — only the latest one (re-issues are all counted). */
+const ONB_DEPTS=['MSD','MADD'];
+const ONB_STATES=['Activated','Not activated','Closed'];
+const ONB_COLOR={'Activated':'#0ca30c','Not activated':'#d97706','Closed':'#64748b'};
+const onbDept=v=>{ const t=String(v??'').trim().toUpperCase().replace(/[^A-Z]/g,''); return ONB_DEPTS.includes(t)?t:''; };
+const onbIsNew=r=>!String(r.reason_for_reissue??'').trim();
+const onbState=s=>{ const t=String(s??'').trim().toLowerCase().replace(/\s+/g,''); if(/^c-?declared/.test(t)) return 'Not activated'; if(/^9\b|^9-|closed/.test(t)) return 'Closed'; return 'Activated'; };
+const onbPill=st=>'<span class="pill" style="background:color-mix(in srgb,'+ONB_COLOR[st]+' 15%,transparent);color:'+ONB_COLOR[st]+';white-space:nowrap">'+escHtml(st)+'</span>';
+const onbKey=r=>normTxt(r.customer_name).toLowerCase()+'|'+normTxt(r.address).toLowerCase();
+const onbExact=r=>onbKey(r)+'|'+String(r.twcms_date||'').slice(0,10)+'|'+normTxt(r.reason_for_reissue).toLowerCase();
+/* which rows count: MSD/MADD only; every re-issue; for new cards only the latest per person. Returns {set, newer} */
+function onbCount(rows){
+  const keep=new Set(), best={}, later=(a,b)=>String(a.twcms_date).localeCompare(String(b.twcms_date))||String(a.created_at||'').localeCompare(String(b.created_at||''))||(Number(a.id)||0)-(Number(b.id)||0);
+  rows.forEach(r=>{ if(!onbDept(r.department)) return; if(!onbIsNew(r)){ keep.add(String(r.id)); return; }
+    const k=onbKey(r); if(!best[k]||later(r,best[k])>0) best[k]=r; });
+  Object.values(best).forEach(r=>keep.add(String(r.id)));
+  return {set:keep,newer:r=>onbIsNew(r)&&!keep.has(String(r.id))?best[onbKey(r)]:null};
+}
+
+async function viewOnboarding(){
+  const admin=IS_ADMIN();
+  const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
+  const col=(l,h,extra)=>'<div style="display:flex;flex-direction:column'+(extra||'')+'">'+lab(l)+h+'</div>';
+  const deptSel=id=>'<select id="'+id+'"><option value="">Select…</option>'+ONB_DEPTS.map(d=>'<option>'+d+'</option>').join('')+'</select>';
+  $('main').innerHTML='<h2>Onboarding</h2>'+
+    '<div class="card" style="padding:12px 14px;margin-bottom:12px;border-left:4px solid #0e9aa7">'+
+      '<div style="font-weight:700;margin-bottom:4px">📌 How cards are counted</div>'+
+      '<div style="font-size:13px;line-height:1.6">Only Department <b>MSD</b> and <b>MADD</b> are counted — other departments are ignored on upload.<br>'+
+      '<b>TWO Status:</b> '+onbPill('Not activated')+' C-Declared · '+onbPill('Closed')+' 9-Closed · '+onbPill('Activated')+' any other status.<br>'+
+      '<b>Reason for reissue</b> blank = <b>new card</b>; filled = <b>re-issued card</b> (a person can have many re-issues).<br>'+
+      'Same <b>customer name + address</b> = same person. A person has only one new card — if there are more, only the <b>latest</b> is counted.</div></div>'+
+    '<div id="obChips" class="dash-kpis" style="margin-bottom:10px"></div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:10px"><button class="setTab active" data-ot="add">Add card</button><button class="setTab" data-ot="up">Upload file</button></div>'+
+    '<div class="card" id="otAdd" style="padding:14px;margin-bottom:12px">'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
+        col('Customer name (card holder) *','<input id="obName" placeholder="Card holder name">')+
+        col('Merchant name','<input id="obMer" placeholder="Merchant / business name">')+
+        col('Address *','<input id="obAddr" placeholder="Address">')+
+        col('Creating in TWCMS *','<input type="date" id="obDate">')+
+        col('TWO Status *','<input id="obTwo" list="obTwoList" placeholder="e.g. C-Declared, 9-Closed"><datalist id="obTwoList"></datalist>')+
+        col('Reason for reissue','<input id="obReason" placeholder="Leave blank for a new card">')+
+        col('Staff name','<input id="obStaff" list="obStaffList" placeholder="Onboarding staff"><datalist id="obStaffList"></datalist>')+
+        col('Department *',deptSel('obDept'))+
+      '</div>'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-top:10px"><button class="btn-sm" id="obSave" style="background:var(--accent);padding:9px 18px">Save card</button>'+
+      '<span class="hint" id="obHint" style="margin:0"></span></div></div>'+
+    '<div class="card" id="otUp" style="padding:14px;margin-bottom:12px;display:none">'+
+      '<div class="hint" style="margin:0 0 8px">Excel or CSV (e.g. the TWCMS batch export) with columns: <b>Customer Name</b>, <b>Merchant Name</b>, <b>Address</b>, <b>Creating in TWCMS</b>, <b>TWO Status</b>, <b>Reason for Reissue</b>, <b>Staff Name</b>, <b>Department</b>.<br>'+
+      'Required: Customer Name, Address, Creating in TWCMS, TWO Status, Department. Rows from departments other than MSD / MADD are <b>ignored</b>.<br>'+
+      'A row already in the system (same customer, address, TWCMS date and reason) is <b>updated</b> — so you can upload the latest export again to refresh TWO Status.</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><input type="file" id="obFile" accept=".xlsx,.xls,.csv" style="max-width:320px">'+
+      '<button class="btn-sm" id="obUpBtn" style="background:var(--accent);padding:9px 16px" disabled>Upload</button>'+
+      '<button class="btn-sm" id="obTpl" style="background:#6b7280;padding:9px 14px">⬇ Template</button><span class="hint" id="obUpInfo" style="margin:0"></span></div></div>'+
+    '<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
+      col('Search','<input id="obQ" placeholder="Customer, merchant or address…">',';flex:1;min-width:200px')+
+      col('Department','<select id="obFD" style="width:120px"><option value="">All</option>'+ONB_DEPTS.map(d=>'<option>'+d+'</option>').join('')+'</select>')+
+      col('Card type','<select id="obFT" style="width:130px"><option value="">All</option><option value="new">New card</option><option value="re">Re-issue</option></select>')+
+      col('Activation','<select id="obFS" style="width:150px"><option value="">All</option>'+ONB_STATES.map(s=>'<option>'+s+'</option>').join('')+'</select>')+
+      col('TWCMS month','<input type="month" id="obFM" style="width:160px">')+
+      col('Counted','<select id="obFC" style="width:150px"><option value="">All rows</option><option value="y">Counted only</option><option value="n">Not counted</option></select>')+
+      col('Staff','<select id="obFP" style="width:160px"><option value="">All</option></select>')+
+      '<button class="btn-sm" id="obClear" style="background:#6b7280;padding:9px 14px">Clear</button>'+
+      '<button class="btn-sm" id="obSearch" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
+      '<button class="btn-sm" id="obExport" style="background:var(--accent);padding:9px 14px">Export Excel</button></div>'+
+    '<div id="obList"><div class="empty">Loading…</div></div>';
+
+  $('main').querySelectorAll('[data-ot]').forEach(b=>b.onclick=()=>{ $('main').querySelectorAll('[data-ot]').forEach(x=>x.classList.toggle('active',x===b));
+    $('otAdd').style.display=b.getAttribute('data-ot')==='add'?'':'none'; $('otUp').style.display=b.getAttribute('data-ot')==='up'?'':'none'; });
+  const showHint=()=>{ const s=$('obTwo').value.trim(); $('obHint').innerHTML=(s?'Activation: '+onbPill(onbState(s))+' ':'')+($('obReason').value.trim()?'· <b>Re-issued card</b>':(s?'· <b>New card</b>':'')); };
+  $('obTwo').oninput=showHint; $('obReason').oninput=showHint;
+
+  let ROWS=[], CNT=onbCount([]);
+  const LIMIT=500;
+  const cur=()=>{ const q=normTxt($('obQ').value).toLowerCase(), d=$('obFD').value, t=$('obFT').value, s=$('obFS').value, m=$('obFM').value, c=$('obFC').value, p=$('obFP').value;
+    return ROWS.filter(r=>(!q||[r.customer_name,r.merchant_name,r.address].some(x=>normTxt(x).toLowerCase().includes(q)))&&(!d||onbDept(r.department)===d)&&
+      (!t||(t==='new')===onbIsNew(r))&&(!s||onbState(r.two_status)===s)&&(!m||String(r.twcms_date||'').slice(0,7)===m)&&
+      (!c||(c==='y')===CNT.set.has(String(r.id)))&&(!p||(p==='__none'?!normTxt(r.staff_name):normTxt(r.staff_name).toLowerCase()===p.toLowerCase()))); };
+  function lists(){
+    const uniq=f=>{ const m=new Map(); ROWS.forEach(r=>{ const t=normTxt(f(r)); if(t&&!m.has(t.toLowerCase())) m.set(t.toLowerCase(),t); }); return [...m.values()].sort((a,b)=>a.localeCompare(b)); };
+    const staff=uniq(r=>r.staff_name), sel=$('obFP'), keep=sel.value;
+    sel.innerHTML='<option value="">All</option>'+staff.map(n=>'<option'+(n===keep?' selected':'')+'>'+escHtml(n)+'</option>').join('')+'<option value="__none"'+(keep==='__none'?' selected':'')+'>(no staff name)</option>';
+    $('obStaffList').innerHTML=staff.map(n=>'<option value="'+escHtml(n)+'">').join('');
+    $('obTwoList').innerHTML=[...new Set(['C-Declared','9-Closed'].concat(uniq(r=>r.two_status)))].map(n=>'<option value="'+escHtml(n)+'">').join('');
+  }
+  function chips(){
+    const C=ROWS.filter(r=>CNT.set.has(String(r.id))), n=C.length, nw=C.filter(onbIsNew).length, by={}; C.forEach(r=>{ const k=onbState(r.two_status); by[k]=(by[k]||0)+1; });
+    const tile=(v,l,s,c,ic,act)=>'<div class="kpi" style="--k:'+c+';cursor:pointer" data-oc="'+act+'"><div class="ic">'+ic+'</div><div class="n">'+v.toLocaleString()+'</div><div class="l">'+l+'</div><div class="s">'+s+'</div></div>';
+    $('obChips').innerHTML=tile(n,'Total onboarding cards','counted (MSD + MADD)','var(--accent)','💳','all')+tile(nw,'New onboarding',pct(nw,n)+' of cards','#2a78d6','🆕','new')+
+      tile(n-nw,'Re-issue cards',pct(n-nw,n)+' of cards','#6250d6','🔁','re')+tile(by['Activated']||0,'Activated',pct(by['Activated']||0,n)+' of cards',ONB_COLOR['Activated'],'✅','Activated')+
+      tile(by['Not activated']||0,'Not activated','C-Declared',ONB_COLOR['Not activated'],'⏳','Not activated')+tile(by['Closed']||0,'Closed','9-Closed',ONB_COLOR['Closed'],'🚫','Closed');
+    $('obChips').querySelectorAll('[data-oc]').forEach(b=>b.onclick=()=>{ const a=b.getAttribute('data-oc'); $('obFC').value='y'; $('obFT').value=a==='new'||a==='re'?a:''; $('obFS').value=ONB_STATES.includes(a)?a:''; render(); });
+  }
+  function render(){
+    chips(); const rows=cur();
+    if(!rows.length){ $('obList').innerHTML='<div class="empty">'+(ROWS.length?'No cards match the filter.':'No onboarding cards yet — add one or upload the TWCMS file.')+'</div>'; return; }
+    const cnt=rows.filter(r=>CNT.set.has(String(r.id))).length;
+    $('obList').innerHTML='<div class="hint" style="margin:0 0 6px">'+rows.length.toLocaleString()+' row'+(rows.length>1?'s':'')+' · <b>'+cnt.toLocaleString()+'</b> counted'+(rows.length>LIMIT?' · showing the latest '+LIMIT+' — use the filters or Export Excel for everything':'')+'</div>'+
+      '<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr><th style="min-width:150px">Customer name</th><th style="min-width:140px">Merchant name</th><th style="min-width:180px">Address</th><th>Creating in TWCMS</th><th>TWO Status</th><th>Reason for reissue</th><th>Staff name</th><th>Department</th><th>Counted</th><th>Actions</th></tr></thead><tbody>'+
+      rows.slice(0,LIMIT).map(r=>{ const st=onbState(r.two_status), dep=onbDept(r.department), nb=CNT.newer(r), counted=CNT.set.has(String(r.id));
+        return '<tr'+(counted?'':' style="opacity:.62"')+'><td><b>'+escHtml(r.customer_name)+'</b></td><td>'+escHtml(r.merchant_name||'')+'</td><td>'+escHtml(r.address||'')+'</td>'+
+        '<td style="white-space:nowrap">'+escHtml(fmtD(r.twcms_date)||'')+'</td><td><div style="white-space:nowrap">'+escHtml(r.two_status||'')+'</div>'+onbPill(st)+'</td>'+
+        '<td>'+(onbIsNew(r)?'<span class="pill" style="background:color-mix(in srgb,#2a78d6 14%,transparent);color:#2a78d6">New card</span>':escHtml(r.reason_for_reissue))+'</td>'+
+        '<td>'+escHtml(r.staff_name||'')+'</td><td><b>'+escHtml(dep||r.department||'')+'</b></td>'+
+        '<td style="white-space:normal;min-width:120px">'+(counted?'<span style="color:var(--ok);font-weight:700">✓ Counted</span>':'<span style="color:var(--hint);font-size:12px">Not counted — newer card '+escHtml(nb?fmtD(nb.twcms_date):'')+'</span>')+'</td>'+
+        '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-obe="'+r.id+'">Edit</button>'+
+        (admin?' <button class="btn-xs" style="background:var(--danger)" data-obd="'+r.id+'">Remove</button>':'')+'</td></tr>'; }).join('')+'</tbody></table></div>';
+    const find=id=>ROWS.find(x=>String(x.id)===String(id));
+    $('obList').querySelectorAll('[data-obe]').forEach(b=>b.onclick=()=>{ const r=find(b.getAttribute('data-obe')); if(!r) return;
+      editModal('Edit card — '+(r.customer_name||''),[
+        {key:'two_status',label:'TWO Status',value:r.two_status,hint:'C-Declared = not activated · 9-Closed = closed · anything else = activated.'},
+        {key:'customer_name',label:'Customer name',value:r.customer_name},
+        {key:'merchant_name',label:'Merchant name',value:r.merchant_name},
+        {key:'address',label:'Address',value:r.address},
+        {key:'twcms_date',label:'Creating in TWCMS',value:String(r.twcms_date||'').slice(0,10),type:'date'},
+        {key:'reason_for_reissue',label:'Reason for reissue',value:r.reason_for_reissue,hint:'Blank = new card.'},
+        {key:'staff_name',label:'Staff name',value:r.staff_name},
+        {key:'department',label:'Department',value:onbDept(r.department)||'',type:'select',options:ONB_DEPTS}],async v=>{
+          if(!normTxt(v.customer_name)) return 'Customer name is required.';
+          if(!normTxt(v.address)) return 'Address is required.';
+          if(!isISO(v.twcms_date)) return 'Creating in TWCMS must be a valid date.';
+          if(v.twcms_date>localISO(new Date())) return 'Creating in TWCMS cannot be in the future.';
+          if(!normTxt(v.two_status)) return 'TWO Status is required.';
+          if(!onbDept(v.department)) return 'Department must be MSD or MADD.';
+          const row={customer_name:normTxt(v.customer_name),merchant_name:normTxt(v.merchant_name)||null,address:normTxt(v.address),twcms_date:v.twcms_date,two_status:normTxt(v.two_status),
+            reason_for_reissue:normTxt(v.reason_for_reissue)||null,staff_name:normTxt(v.staff_name)||null,department:onbDept(v.department)};
+          const dup=ROWS.find(x=>String(x.id)!==String(r.id)&&onbExact(x)===onbExact(row));
+          if(dup) return 'Another row already has the same customer, address, TWCMS date and reason.';
+          const {error}=await sb.from('onboarding').update(row).eq('id',r.id);
+          if(error) return error.message; popup('Card updated.'); load(); });
+    });
+    $('obList').querySelectorAll('[data-obd]').forEach(b=>b.onclick=()=>{ const r=find(b.getAttribute('data-obd')); if(!r) return;
+      confirmBox('Remove the onboarding card for '+r.customer_name+' ('+(fmtD(r.twcms_date)||'')+')?','Remove',async()=>{
+        const {error}=await sb.from('onboarding').delete().eq('id',r.id); if(error) popup(error.message); else load(); }); });
+  }
+  async function load(){
+    const {data,error}=await fetchAll('onboarding','id,customer_name,merchant_name,address,twcms_date,two_status,reason_for_reissue,staff_name,department,created_at,updated_at');
+    if(error){ $('obList').innerHTML='<div class="empty">'+escHtml(/onboarding|does not exist|schema cache/i.test(error.message)?'The Onboarding table is not set up yet — run supabase_migration_onboarding.sql in Supabase.':error.message)+'</div>'; return; }
+    ROWS=(data||[]).slice().sort((a,b)=>String(b.twcms_date).localeCompare(String(a.twcms_date))||String(b.created_at||'').localeCompare(String(a.created_at||'')));
+    CNT=onbCount(ROWS); lists(); render();
+  }
+  $('obSearch').onclick=render; ['obFD','obFT','obFS','obFM','obFC','obFP'].forEach(id=>$(id).onchange=render);
+  $('obQ').addEventListener('keydown',e=>{if(e.key==='Enter')render();});
+  $('obClear').onclick=()=>{ ['obQ','obFD','obFT','obFS','obFM','obFC','obFP'].forEach(id=>$(id).value=''); render(); };
+
+  // add one card
+  $('obSave').onclick=async function(){
+    const row={customer_name:normTxt($('obName').value),merchant_name:normTxt($('obMer').value)||null,address:normTxt($('obAddr').value),twcms_date:$('obDate').value,
+      two_status:normTxt($('obTwo').value),reason_for_reissue:normTxt($('obReason').value)||null,staff_name:normTxt($('obStaff').value)||null,department:onbDept($('obDept').value)};
+    if(!row.customer_name) return popup('Customer name is required.');
+    if(!row.address) return popup('Address is required — it identifies the same person.');
+    if(!isISO(row.twcms_date)) return popup('Creating in TWCMS date is required.');
+    if(row.twcms_date>localISO(new Date())) return popup('Creating in TWCMS cannot be in the future.');
+    if(!row.two_status) return popup('TWO Status is required.');
+    if(!row.department) return popup('Department must be MSD or MADD.');
+    const dup=ROWS.find(x=>onbExact(x)===onbExact(row));
+    if(dup) return popup('This card is already recorded ('+escHtml(dup.customer_name)+', '+fmtD(dup.twcms_date)+'). Use Edit on that row instead.');
+    const prev=onbIsNew(row)&&ROWS.find(x=>onbIsNew(x)&&onbDept(x.department)&&onbKey(x)===onbKey(row));
+    this.disabled=true; const {error}=await sb.from('onboarding').insert(row); this.disabled=false;
+    if(error) return popup(error.message);
+    popup('Card saved.'+(prev?' This person already had a new card ('+fmtD(prev.twcms_date)+') — only the latest new card is counted.':''));
+    ['obName','obMer','obAddr','obDate','obTwo','obReason','obStaff'].forEach(id=>$(id).value=''); $('obDept').value=''; showHint(); load();
+  };
+
+  // upload
+  const HMAP={customername:'customer_name',cardholdername:'customer_name',cardholder:'customer_name',customer:'customer_name',name:'customer_name',
+    merchantname:'merchant_name',merchant:'merchant_name',businessname:'merchant_name',address:'address',location:'address',
+    creatingintwcms:'twcms_date',createdintwcms:'twcms_date',twcmsdate:'twcms_date',createdate:'twcms_date',createddate:'twcms_date',creationdate:'twcms_date',twcms:'twcms_date',
+    twostatus:'two_status',status:'two_status',cardstatus:'two_status',reasonforreissue:'reason_for_reissue',reissuereason:'reason_for_reissue',reason:'reason_for_reissue',
+    staffname:'staff_name',staff:'staff_name',onboardingstaff:'staff_name',onboardingby:'staff_name',department:'department',dept:'department'};
+  const hkey=h=>HMAP[String(h).toLowerCase().replace(/[^a-z0-9]/g,'')];
+  let PARSED=null;
+  $('obTpl').onclick=()=>exportXlsx('onboarding_template.xlsx',['Customer Name','Merchant Name','Address','Creating in TWCMS','TWO Status','Reason for Reissue','Staff Name','Department'],
+    [['SOK DARA','DARA MART','#12 St. 51, Phnom Penh','17-Nov-26','C-Declared','','Sokha','MSD'],['CHAN THIDA','THIDA SHOP','#88 St. 271, Phnom Penh','18-Nov-26','A-Active','Lost card','Vanna','MADD']]);
+  $('obFile').onchange=function(){ PARSED=null; $('obUpBtn').disabled=true; $('obUpInfo').textContent=''; const f=this.files[0]; if(!f) return;
+    const rd=new FileReader(); rd.onload=e=>{ try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+      const raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:'',raw:true});
+      if(!raw.length){ $('obUpInfo').textContent='The file is empty.'; return; }
+      const keys=Object.keys(raw[0]).map(hkey);
+      const need=[['customer_name','Customer Name'],['address','Address'],['twcms_date','Creating in TWCMS'],['two_status','TWO Status'],['department','Department']].filter(k=>!keys.includes(k[0]));
+      if(need.length){ this.value=''; return popup('This file is missing required column(s): '+need.map(k=>k[1]).join(', ')+'. Nothing was uploaded.'); }
+      PARSED=raw.map((r,i)=>{ const o={_row:i+2}; Object.keys(r).forEach(h=>{ const k=hkey(h); if(k&&o[k]==null) o[k]=r[h]; }); return o; })
+        .filter(o=>Object.keys(HMAP).map(k=>HMAP[k]).some(k=>String(o[k]??'').trim()!==''));
+      const ign=PARSED.filter(o=>!onbDept(o.department)).length;
+      $('obUpInfo').textContent=PARSED.length+' row(s) ready'+(ign?' · '+ign+' from other departments will be ignored':'')+'.'; $('obUpBtn').disabled=!PARSED.length;
+    }catch(err){ popup('Could not read the file: '+err.message); } }; rd.readAsArrayBuffer(f); };
+  $('obUpBtn').onclick=async function(){ if(!PARSED) return; this.disabled=true; $('obUpInfo').textContent='Checking…';
+    await load(); const byExact=new Map(ROWS.map(r=>[onbExact(r),r])), seen=new Set(), rejects=[], ins=[], upd=[];
+    let ignored=0, same=0; const today=localISO(new Date());
+    for(const p of PARSED){
+      const row={customer_name:normTxt(p.customer_name),merchant_name:normTxt(p.merchant_name)||null,address:normTxt(p.address),twcms_date:toISO(p.twcms_date),
+        two_status:normTxt(p.two_status),reason_for_reissue:normTxt(p.reason_for_reissue)||null,staff_name:normTxt(p.staff_name)||null,department:onbDept(p.department)};
+      const F=msg=>rejects.push([p._row,row.customer_name||'(blank)',msg]);
+      if(!row.department){ ignored++; continue; }
+      if(!row.customer_name){ F('Customer Name is missing'); continue; }
+      if(!row.address){ F('Address is missing'); continue; }
+      if(!isISO(row.twcms_date)){ F('Creating in TWCMS is missing or not a date ("'+normTxt(p.twcms_date)+'")'); continue; }
+      if(row.twcms_date>today){ F('Creating in TWCMS is in the future'); continue; }
+      if(!row.two_status){ F('TWO Status is missing'); continue; }
+      const k=onbExact(row); if(seen.has(k)){ F('Same card appears more than once in this file'); continue; } seen.add(k);
+      const ex=byExact.get(k);
+      if(ex){ const ch=['merchant_name','two_status','staff_name','department'].some(f=>normTxt(ex[f])!==normTxt(row[f])||(f==='department'&&onbDept(ex.department)!==row.department));
+        if(ch) upd.push([ex.id,row,p._row]); else same++; }
+      else ins.push([row,p._row]);
+    }
+    let added=0, updated=0;
+    for(let i=0;i<ins.length;i+=500){ $('obUpInfo').textContent='Uploading… '+Math.min(i+500,ins.length)+' / '+ins.length;
+      const chunk=ins.slice(i,i+500), {error}=await sb.from('onboarding').insert(chunk.map(x=>x[0]));
+      if(!error){ added+=chunk.length; continue; }
+      for(const [row,rn] of chunk){ const r2=await sb.from('onboarding').insert(row); if(r2.error) rejects.push([rn,row.customer_name,r2.error.message]); else added++; } }
+    for(const [id,row,rn] of upd){ const {error}=await sb.from('onboarding').update(row).eq('id',id); if(error) rejects.push([rn,row.customer_name,error.message]); else updated++; }
+    $('obFile').value=''; PARSED=null; $('obUpInfo').textContent='';
+    uploadSummary({total:added+updated+same+ignored+rejects.length,added:added+updated,addedLabel:'Added '+added+' · Updated '+updated+' · Unchanged '+same+' · Ignored (not MSD/MADD) '+ignored,
+      headers:['Row','Customer name','Rejected — reason'],rows:rejects.sort((a,b)=>a[0]-b[0]).map(f=>[f[0],'<b>'+escHtml(f[1])+'</b>',reasonCell(f[2])]),
+      exportName:'rejected_onboarding.xlsx',exportHeaders:['Row','Customer name','Reason'],exportRows:rejects});
+    load(); };
+
+  $('obExport').onclick=()=>{ const rows=cur(); if(!rows.length) return popup('Nothing to export.');
+    exportXlsx('onboarding_cards.xlsx',['Customer Name','Merchant Name','Address','Creating in TWCMS','TWO Status','Activation','Reason for Reissue','Card type','Staff Name','Department','Counted'],
+      rows.map(r=>[r.customer_name,r.merchant_name||'',r.address||'',fmtD(r.twcms_date),r.two_status||'',onbState(r.two_status),r.reason_for_reissue||'',onbIsNew(r)?'New card':'Re-issue',r.staff_name||'',onbDept(r.department)||r.department||'',
+        CNT.set.has(String(r.id))?'Yes':'No — newer new card for same person'])); };
+  load();
+}
+
 /* ---------- DASHBOARD ---------- */
 /* Charts: Chart.js (loaded on demand). Colours follow the data-viz palette:
    status colours for delivery state (with labels, never colour alone), blue/orange for series. */
@@ -1099,8 +1327,9 @@ async function dashLoad(){
   const [c,s]=await Promise.all([fetchAll('merchant_card_detail','id,cardholder_name,create_date,reason_for_reissue'),
     fetchAll('submissions','id,card_ref,delivery_card_status,delivery_name,staff_id,branch_code,delivery_unit,delivery_date,created_at')]);
   if(c.error||s.error){ $('dKpi').innerHTML='<div class="empty">'+escHtml((c.error||s.error).message)+'</div>'; return; }
-  const [fz,lz]=await Promise.all([fetchAll('fee_monthly','id,month,interest_fee,late_fee'),fetchAll('late_payment','id,credit_name,late_count,late_months,min_due,full_amount,status,repayment_date,action_log,updated_at')]);
-  DASH.state={cards:c.data||[],subs:s.data||[],fees:fz.error?null:(fz.data||[]),late:lz.error?null:(lz.data||[]),range:dashRange()};
+  const [fz,lz,oz]=await Promise.all([fetchAll('fee_monthly','id,month,interest_fee,late_fee'),fetchAll('late_payment','id,credit_name,late_count,late_months,min_due,full_amount,status,repayment_date,action_log,updated_at'),
+    fetchAll('onboarding','id,customer_name,address,twcms_date,two_status,reason_for_reissue,staff_name,department,created_at')]);
+  DASH.state={cards:c.data||[],subs:s.data||[],fees:fz.error?null:(fz.data||[]),late:lz.error?null:(lz.data||[]),onb:oz.error?null:(oz.data||[]),range:dashRange()};
   dashRender();
 }
 /* month keys (yyyy-mm) for a year, or for every month between the earliest and latest data when Y is '' (All years) */
@@ -1145,11 +1374,16 @@ function dashRender(){
     tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
 
   // ---------- layout ----------
-  const DC={c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
+  const DC={o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
   const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   const sec=(ic,t,h)=>'<div class="dash-sec"><span class="si">'+ic+'</span><b>'+t+'</b>'+(h?'<span class="h">'+h+'</span>':'')+'</div>';
   $('dGrid').innerHTML=
+    sec('🧾','Onboarding','MSD & MADD · counted cards only · by Creating in TWCMS · use the year box')+
+    box('o1','Onboarding overview','New card = blank Reason for reissue · a person (same name + address) counts one new card — the latest · C-Declared = not activated · 9-Closed = closed',true)+
+    box('o2','New onboarding: MSD vs MADD','New cards per month by department',true)+
+    box('o3','Card activation rate','Activated (incl. later closed) vs C-Declared')+
+    box('o4','Top 5 onboarding staff','Counted cards by staff · new + re-issue')+
     sec('📈','Monthly trends','each chart has its own year box')+
     box('c0','Cards issued vs Delivered','Issued = cards by create date month · Delivered = records with status Delivered, by delivery month',true)+
     sec('💵','Collections & fee income','Late Payment and Interest Rate pages')+
@@ -1217,6 +1451,87 @@ function dashRender(){
           scales:{x:{...axis,grid:{display:false},ticks:{...axis.ticks,autoSkip:false,maxRotation:60,minRotation:many?45:0,font:{size:many?10:12}}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
           plugins:{legend:{...legend,position:'top',labels:{...legend.labels,sort:(a,b)=>a.datasetIndex-b.datasetIndex}},tooltip:{...tt,callbacks:{title:it=>full[it[0].dataIndex],footer:it=>{const i=it[0].dataIndex;return 'Delivered vs issued: '+pct(del[i],cre[i]);}}}}}}));
     } }
+
+  // o) onboarding — MSD & MADD, counted rows only, by Creating in TWCMS year
+  { const ALL=st.onb||[], CN=onbCount(ALL), OK=ALL.filter(r=>CN.set.has(String(r.id))&&/^\d{4}-\d{2}/.test(String(r.twcms_date||'')));
+    const mk=r=>String(r.twcms_date).slice(0,7), allK=OK.map(mk);
+    const yrs=[...new Set(allK.map(k=>k.slice(0,4)))].sort().reverse(), nowY=String(new Date().getFullYear()); if(!yrs.includes(nowY)) yrs.unshift(nowY);
+    if(DASH.onbYear===undefined||(DASH.onbYear&&!yrs.includes(DASH.onbYear))) DASH.onbYear=nowY;
+    const Y=DASH.onbYear, scopeY=Y||'all years', R=OK.filter(r=>!Y||mk(r).slice(0,4)===Y);
+    const head=$('o1').previousElementSibling;
+    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dOnbYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+yrs.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
+    $('dOnbYear').onchange=function(){ DASH.onbYear=this.value; dashRender(); };
+    const n=R.length, NW=R.filter(onbIsNew), by={Activated:0,'Not activated':0,Closed:0}; R.forEach(r=>by[onbState(r.two_status)]++);
+    const ever=by.Activated+by.Closed, rate=n?ever/n:0;
+    const OCOL={Activated:P.good,'Not activated':P.warn,Closed:P.none}, DCOL={MSD:P.s1,MADD:P.s3};
+    $('o1').innerHTML=st.onb===null?'<div class="empty" style="padding:30px 0">The Onboarding table is not set up yet.</div>':
+      '<div class="dash-kpis" style="margin:2px 0 0">'+tile(n,'Total onboarding cards','MSD + MADD · '+scopeY,'var(--accent)','💳')+
+      tile(NW.length,'New onboarding',pct(NW.length,n)+' of cards · latest per person',P.s1,'🆕',n?NW.length/n:0)+
+      tile(n-NW.length,'Re-issue cards',pct(n-NW.length,n)+' of cards',P.s4,'🔁',n?(n-NW.length)/n:0)+
+      tile(by.Activated,'Activated','active now',P.good,'✅',n?by.Activated/n:0)+
+      tile(by['Not activated'],'Not activated','C-Declared',P.warn,'⏳',n?by['Not activated']/n:0)+
+      tile(by.Closed,'Closed','9-Closed',P.none,'🚫',n?by.Closed/n:0)+
+      tile(Math.round(rate*100)+'%','Activation rate','activated + closed ÷ total',P.s3,'📈',rate)+'</div>';
+    EXP.o1={h:['Measure ('+scopeY+')','Cards','Share'],r:[['Total onboarding cards',n,'100%'],['New onboarding',NW.length,pct(NW.length,n)],['Re-issue cards',n-NW.length,pct(n-NW.length,n)],
+      ['Activated',by.Activated,pct(by.Activated,n)],['Not activated (C-Declared)',by['Not activated'],pct(by['Not activated'],n)],['Closed (9-Closed)',by.Closed,pct(by.Closed,n)],['Activation rate (activated + closed)',ever,pct(ever,n)]]};
+
+    // o2) new onboarding by month: MSD vs MADD
+    const keys=dashMonthKeys(Y,NW.map(mk)), mi={}; keys.forEach((k,i)=>mi[k]=i);
+    const ser={MSD:keys.map(()=>0),MADD:keys.map(()=>0)}; NW.forEach(r=>{ const k=mk(r), d=onbDept(r.department); if(k in mi&&ser[d]) ser[d][mi[k]]++; });
+    const tM=ser.MSD.reduce((a,b)=>a+b,0), tA=ser.MADD.reduce((a,b)=>a+b,0), many=keys.length>14;
+    const mLbl=keys.map(k=>Y?MON3[+k.slice(5,7)-1]:monLbl(k+'-01')), mFull=keys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
+    EXP.o2={h:['Month','MSD new onboarding','MADD new onboarding','Total'],r:keys.map((k,i)=>[mFull[i],ser.MSD[i],ser.MADD[i],ser.MSD[i]+ser.MADD[i]]).concat([['Total ('+scopeY+')',tM,tA,tM+tA]])};
+    if(st.onb===null) empty('o2','The Onboarding table is not set up yet.');
+    else if(!tM&&!tA) empty('o2','No new onboarding cards in '+scopeY+'.');
+    else {
+      const dstat=(d,v)=>'<div style="flex:1 1 150px;border-radius:12px;padding:10px 14px;background:linear-gradient(135deg,color-mix(in srgb,'+DCOL[d]+' 14%,var(--bg)),var(--bg) 75%);border:1px solid color-mix(in srgb,'+DCOL[d]+' 30%,transparent);position:relative;overflow:hidden">'+
+        '<span style="position:absolute;left:0;top:0;bottom:0;width:4px;background:'+DCOL[d]+'"></span><div style="font-size:12px;font-weight:700;color:'+DCOL[d]+'">'+d+'</div>'+
+        '<div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:24px;font-weight:800">'+v.toLocaleString()+'</span><span class="hint" style="margin:0">new cards · '+pct(v,tM+tA)+'</span></div></div>';
+      $('o2').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 12px">'+dstat('MSD',tM)+dstat('MADD',tA)+
+        '<div style="flex:1 1 150px;border-radius:12px;padding:10px 14px;color:#fff;background:linear-gradient(120deg,#00324f,#004973 55%,#0a7bb5)"><div style="font-size:12px;font-weight:700;opacity:.85">TOTAL NEW ('+scopeY.toUpperCase()+')</div><div style="font-size:24px;font-weight:800">'+(tM+tA).toLocaleString()+'</div></div></div>'+
+        '<div style="position:relative;height:290px"><canvas></canvas></div>';
+      const vL={id:'o2lbl',afterDatasetsDraw(ch){ if(many) return; const c=ch.ctx; c.save(); c.font='600 10px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
+        ch.data.datasets.forEach((ds,k)=>{ const m=ch.getDatasetMeta(k); if(m.hidden) return; m.data.forEach((b,i)=>{ if(ds.data[i]) c.fillText(ds.data[i],b.x,b.y-5); }); }); c.restore(); }};
+      DASH.charts.push(new Chart($('o2').querySelector('canvas'),{type:'bar',plugins:[vL],
+        data:{labels:mLbl,datasets:[{label:'MSD',data:ser.MSD,...bar(P.s1)},{label:'MADD',data:ser.MADD,...bar(P.s3)}]},
+        options:{maintainAspectRatio:false,layout:{padding:{top:16}},interaction:{mode:'index',intersect:false},
+          scales:{x:{...axis,grid:{display:false},ticks:{...axis.ticks,autoSkip:false,maxRotation:60,minRotation:many?45:0,font:{size:many?10:12}}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
+          plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{title:it=>mFull[it[0].dataIndex],footer:it=>{const i=it[0].dataIndex,t=ser.MSD[i]+ser.MADD[i];return 'Total: '+t+' · MSD '+pct(ser.MSD[i],t)+' · MADD '+pct(ser.MADD[i],t);}}}}}}));
+    }
+
+    // o3) card activation rate — donut + per department
+    const dRate=ONB_DEPTS.map(d=>{ const x=R.filter(r=>onbDept(r.department)===d), a=x.filter(r=>onbState(r.two_status)!=='Not activated').length; return {d,t:x.length,a,on:x.filter(r=>onbState(r.two_status)==='Activated').length,cl:x.filter(r=>onbState(r.two_status)==='Closed').length}; });
+    EXP.o3={h:['Department','Cards','Activated','Not activated','Closed','Activation rate'],r:dRate.map(x=>[x.d,x.t,x.on,x.t-x.a,x.cl,pct(x.a,x.t)]).concat([['Total',n,by.Activated,by['Not activated'],by.Closed,pct(ever,n)]])};
+    if(st.onb===null) empty('o3','The Onboarding table is not set up yet.');
+    else if(!n) empty('o3','No onboarding cards in '+scopeY+'.');
+    else {
+      $('o3').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center"><div style="position:relative;height:230px;flex:1 1 200px;min-width:190px"><canvas></canvas></div>'+
+        '<div style="flex:1 1 180px;display:flex;flex-direction:column;gap:10px">'+dRate.map(x=>{ const r=x.t?x.a/x.t:0;
+          return '<div style="border-radius:12px;padding:10px 12px;border:1px solid var(--line);background:var(--bg)"><div style="display:flex;align-items:center;gap:8px"><span style="width:9px;height:9px;border-radius:50%;background:'+DCOL[x.d]+'"></span><b>'+x.d+'</b>'+
+            '<span style="margin-left:auto;font-size:18px;font-weight:800">'+Math.round(r*100)+'%</span></div><div class="hint" style="margin:2px 0 6px">'+x.a+' of '+x.t+' cards activated'+(x.cl?' (incl. '+x.cl+' closed)':'')+'</div>'+
+            '<div style="height:6px;border-radius:3px;background:var(--line);overflow:hidden"><i style="display:block;height:100%;width:'+(r*100).toFixed(1)+'%;background:'+DCOL[x.d]+';border-radius:3px"></i></div></div>'; }).join('')+'</div></div>';
+      const ks=ONB_STATES.filter(k=>by[k]);
+      const ctr={id:'o3ctr',afterDatasetsDraw(ch){ const c=ch.ctx, m=ch.getDatasetMeta(0); if(!m.data[0]) return; c.save(); c.textAlign='center'; c.textBaseline='middle';
+        c.font='700 11px '+Chart.defaults.font.family; c.fillStyle='#fff'; m.data.forEach((a,i)=>{ const v=ch.data.datasets[0].data[i]; if(!v||v/n<0.07) return; const p=a.tooltipPosition(); c.fillText(Math.round(v*100/n)+'%',p.x,p.y); });
+        const cx=m.data[0].x, cy=m.data[0].y; c.fillStyle=P.text; c.font='800 26px '+Chart.defaults.font.family; c.fillText(Math.round(rate*100)+'%',cx,cy-8);
+        c.fillStyle=P.muted; c.font='500 12px '+Chart.defaults.font.family; c.fillText('Activation rate',cx,cy+15); c.restore(); }};
+      DASH.charts.push(new Chart($('o3').querySelector('canvas'),{type:'doughnut',plugins:[ctr],
+        data:{labels:ks.map(k=>k+' · '+by[k]),datasets:[{data:ks.map(k=>by[k]),backgroundColor:ks.map(k=>OCOL[k]),borderColor:P.surface,borderWidth:2,borderRadius:6,spacing:2,hoverOffset:8}]},
+        options:{maintainAspectRatio:false,cutout:'66%',layout:{padding:6},plugins:{legend:{...legend,position:'bottom'},tooltip:{...tt,callbacks:{label:c=>' '+c.label+' ('+pct(c.parsed,n)+')'}}}}}));
+    }
+
+    // o4) top 5 onboarding staff — counted cards, new + re-issue
+    const SF={}; R.forEach(r=>{ const nm=normTxt(r.staff_name)||'(no staff name)', k=nm.toLowerCase(); SF[k]=SF[k]||{nm,n:0,r:0,a:0,d:{}}; onbIsNew(r)?SF[k].n++:SF[k].r++;
+      if(onbState(r.two_status)!=='Not activated') SF[k].a++; const dd=onbDept(r.department); SF[k].d[dd]=(SF[k].d[dd]||0)+1; });
+    const staff=Object.values(SF).sort((a,b)=>(b.n+b.r)-(a.n+a.r)||b.n-a.n), top=staff.slice(0,5);
+    EXP.o4={h:['#','Staff name','New onboarding','Re-issue','Total cards','Activation rate','MSD','MADD'],r:staff.map((x,i)=>[i+1,x.nm,x.n,x.r,x.n+x.r,pct(x.a,x.n+x.r),x.d.MSD||0,x.d.MADD||0])};
+    if(st.onb===null) empty('o4','The Onboarding table is not set up yet.');
+    else if(!top.length) empty('o4','No onboarding cards in '+scopeY+'.');
+    else DASH.charts.push(new Chart(canvas('o4',Math.max(220,top.length*46+70)),{type:'bar',plugins:[endLbl],
+      data:{labels:top.map((x,i)=>['🥇','🥈','🥉','4.','5.'][i]+' '+x.nm),datasets:[{label:'New onboarding',data:top.map(x=>x.n),...bar(P.s1)},{label:'Re-issue',data:top.map(x=>x.r),...bar(P.s4),borderWidth:{top:0,right:0,bottom:0,left:2}}]},
+      options:{indexAxis:'y',maintainAspectRatio:false,layout:{padding:{right:34}},scales:{x:{...axis,stacked:true,beginAtZero:true,ticks:{...axis.ticks,precision:0}},y:{...axis,stacked:true,grid:{display:false},ticks:{...axis.ticks,font:{size:12,weight:'600'},color:P.text}}},
+        plugins:{legend,tooltip:{...tt,mode:'index',callbacks:{footer:it=>{const x=top[it[0].dataIndex];return 'Total: '+(x.n+x.r)+' · Activation rate: '+pct(x.a,x.n+x.r)+' · '+ONB_DEPTS.filter(d=>x.d[d]).map(d=>d+' '+x.d[d]).join(' / ');}}}}}}));
+  }
 
   // f1) interest & late payment fee: monthly stacked, with a year filter
   { const ALLF=(st.fees||[]).slice().sort((a,b)=>String(a.month).localeCompare(String(b.month)));
@@ -1426,10 +1741,10 @@ function dashRender(){
       '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
 
   // Excel buttons
-  const names={c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  const names={o1:'onboarding_overview',o2:'new_onboarding_msd_vs_madd',o3:'card_activation_rate',o4:'top_onboarding_staff',c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
   $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
     if(!e||!e.r.length) return popup('Nothing to export for this period.');
-    if(id==='f1'||id==='l1') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
+    if(id==='f1'||id==='l1'||id[0]==='o') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
     let rows=e.r; if(id==='c6'&&reasons.length){ rows=rows.concat([[],['Top reissue reasons','Cards']]).concat(reasons.map(x=>[x.label,x.c])); }
     exportXlsx(names[id]+'.xlsx',e.h,rows); });
 }
@@ -2156,7 +2471,12 @@ function makeMockClient(){
     if(row.status==='Done repayment'){ if(!row.repayment_date) row.repayment_date=t.slice(0,10); } else row.repayment_date=null;
     const log=(old&&old.action_log)||[]; if(!old||row.status!==old.status||Number(row.late_count)!==Number(old.late_count))
       row.action_log=log.concat([{at:t,by:'Demo Admin',event:old?'Updated':'Case added',status:row.status,late_count:row.late_count,remark:row.remark||''}]); else row.action_log=log; return row; };
-  const db={merchant_card_detail:cards, submissions:subs, profiles:profiles, ref_branch:ref_branch, ref_unit:ref_unit, ref_card_status:ref_card_status, fee_monthly:fee_monthly, late_payment:late_payment};
+  const onboarding=[]; { const nm=['SOK DARA','CHAN THIDA','LIM SOPHEA','KEO VUTHY','MEAS SREYNICH','HENG RITHY','PICH SOKHA','TOUCH MONY','SAY CHENDA','RIN VISAL','OUK SAMNANG','YIM BOPHA'],
+      st=['C-Declared','A-Active','A-Active','A-Active','9-Closed','A-Active','C-Declared'], sf=['Sokha','Vanna','Dara','Sophea','Piseth','Ratana'], dp=['MSD','MADD','MSD','MADD','MSD'];
+    let id=0; for(let m=1;m<=11;m++) for(let i=0;i<4+m;i++){ const k=(m*7+i*3)%nm.length;
+      onboarding.push({id:++id,customer_name:nm[k],merchant_name:nm[k].split(' ')[0]+' MART',address:'#'+(10+k)+' St. '+(50+k)+', Phnom Penh',twcms_date:'2026-'+String(m).padStart(2,'0')+'-'+String(1+(i*4)%27).padStart(2,'0'),
+        two_status:st[(i+m)%st.length],reason_for_reissue:i%4===3?'Lost card':'',staff_name:sf[(i+m*2)%sf.length],department:dp[(i+m)%dp.length],created_at:new Date().toISOString()}); } }
+  const db={onboarding:onboarding,merchant_card_detail:cards, submissions:subs, profiles:profiles, ref_branch:ref_branch, ref_unit:ref_unit, ref_card_status:ref_card_status, fee_monthly:fee_monthly, late_payment:late_payment};
   function run(st){
     try{
       if(st.op==='delete'){ const a=db[st.table]; if(a){for(let i=a.length-1;i>=0;i--){if(st.filters.every(([c,v])=>String(a[i][c])===String(v))&&(st.ins||[]).every(([c,vs])=>vs.includes(String(a[i][c]))))a.splice(i,1);}} return {error:null}; }
