@@ -1327,8 +1327,10 @@ async function viewDashboard(){
   $('main').innerHTML='<div class="dash-hero"><h2>📊 Dashboard</h2><div class="sub">Card delivery performance at a glance</div>'+
     '<div class="card dash-filters">'+
       '<div><label class="hint" style="margin:0 0 2px">Period</label><select id="dRange" style="width:170px">'+
-        '<option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="month">This month</option><option value="lastmonth">Last month</option><option value="year">This year</option><option value="all">All time</option><option value="custom">Custom…</option></select></div>'+
+        '<option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="month">This month</option><option value="lastmonth">Last month</option><option value="12m">Last 12 months</option><option value="year" selected>This year</option>'+
+        [1,2,3].map(k=>'<option value="y'+(new Date().getFullYear()-k)+'">'+(new Date().getFullYear()-k)+'</option>').join('')+'<option value="all">All time</option><option value="custom">Custom…</option></select></div>'+
       '<div id="dCustom" style="display:none;gap:10px"><div><label class="hint" style="margin:0 0 2px">From</label><input type="date" id="dFrom" style="width:150px"></div><div><label class="hint" style="margin:0 0 2px">To</label><input type="date" id="dTo" style="width:150px"></div></div>'+
+      '<div id="dDeptWrap"><label class="hint" style="margin:0 0 2px">Department</label><select id="dDept" style="width:160px"><option value="">All (MSD + MADD)</option><option>MSD</option><option>MADD</option></select></div>'+
       '<button class="btn-sm" id="dGo" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
       '<div class="hint" id="dScope" style="margin:0 0 0 auto;align-self:center;color:rgba(255,255,255,.9)"></div>'+
     '</div></div>'+
@@ -1341,6 +1343,7 @@ async function viewDashboard(){
   $('dTabs').innerHTML=TABS.map(t=>'<button class="dtab" data-dt="'+t[0]+'" style="--t:'+t[4]+'"><span class="ti">'+t[1]+'</span><span style="text-align:left">'+t[2]+'<small>'+t[3]+'</small></span></button>').join('');
   $('dTabs').querySelectorAll('[data-dt]').forEach(b=>b.onclick=()=>{ DASH.tab=b.getAttribute('data-dt'); try{ localStorage.setItem('dashTab',DASH.tab); }catch(e){} dashTabShow(); dashRender(); });
   dashTabShow();
+  $('dDept').value=DASH.dept||''; $('dDept').onchange=function(){ DASH.dept=this.value; dashRender(); };
   $('dRange').onchange=()=>{ $('dCustom').style.display=$('dRange').value==='custom'?'flex':'none'; if($('dRange').value!=='custom') dashLoad(); };
   $('dGo').onclick=dashLoad;
   try{ await loadChartJs(); }catch(e){ $('dKpi').innerHTML='<div class="empty">'+escHtml(e.message)+'</div>'; return; }
@@ -1349,7 +1352,7 @@ async function viewDashboard(){
 /* show only the chosen dashboard tab; the Period filter and delivery tiles belong to Card Delivery */
 function dashTabShow(){
   const t=DASH.tab; document.querySelectorAll('#dTabs [data-dt]').forEach(b=>b.classList.toggle('on',b.getAttribute('data-dt')===t));
-  const f=document.querySelector('.dash-filters'); if(f) f.style.display=t==='del'?'':'none';
+  if($('dDeptWrap')) $('dDeptWrap').style.display=t==='onb'?'':'none';
   if($('dKpi')) $('dKpi').style.display=t==='del'?'':'none';
   document.querySelectorAll('#dGrid [data-tab]').forEach(e=>e.style.display=e.getAttribute('data-tab')===t?'':'none');
 }
@@ -1360,6 +1363,8 @@ function dashRange(){
   if(v==='month') return {from:new Date(t.getFullYear(),t.getMonth(),1),to:t,label:'This month'};
   if(v==='lastmonth') return {from:new Date(t.getFullYear(),t.getMonth()-1,1),to:new Date(t.getFullYear(),t.getMonth(),0),label:'Last month'};
   if(v==='year') return {from:new Date(t.getFullYear(),0,1),to:t,label:'This year'};
+  if(v==='12m') return {from:new Date(t.getFullYear(),t.getMonth()-11,1),to:t,label:'Last 12 months'};
+  if(/^y\d{4}$/.test(v)){ const y=+v.slice(1); return {from:new Date(y,0,1),to:new Date(y,11,31),label:String(y)}; }
   if(v==='custom'){ const f=dParse($('dFrom').value), to=dParse($('dTo').value); return {from:f,to:to,label:'Custom'}; }
   return {from:null,to:null,label:'All time'};
 }
@@ -1390,6 +1395,12 @@ function dashRender(){
   const {from,to,label}=st.range;
   const fromS=from?dISO(from):null, toS=to?dISO(to):null;
   const inRange=d=>{ if(!fromS&&!toS) return true; if(!d) return false; const x=String(d).slice(0,10); return (!fromS||x>=fromS)&&(!toS||x<=toS); };
+  /* month-based charts follow the same Period: months from the start to the end of the period */
+  const fromK=fromS?fromS.slice(0,7):null, toK=toS?toS.slice(0,7):null, scopeP=label;
+  const inMon=k=>!!k&&(!fromK||k>=fromK)&&(!toK||k<=toK);
+  const pKeys=have=>{ if(!fromK&&!toK) return dashMonthKeys('',have); const h=have.filter(Boolean).sort(); const a=fromK||h[0], b=toK||h[h.length-1]; if(!a||!b) return [];
+    const out=[]; let y=+a.slice(0,4), m=+a.slice(5,7); while(true){ const k=y+'-'+String(m).padStart(2,'0'); if(k>b||out.length>240) break; out.push(k); m++; if(m>12){m=1;y++;} } return out; };
+  const pLbl=keys=>{ const one=keys.length&&keys[0].slice(0,4)===keys[keys.length-1].slice(0,4); return keys.map(k=>one?MON3[+k.slice(5,7)-1]:monLbl(k+'-01')); };
   $('dScope').textContent=label+(fromS||toS?' · '+(fromS?fmtD(fromS):'…')+' → '+(toS?fmtD(toS):'…'):'');
 
   const LATEST=latestByRef(st.subs);
@@ -1421,17 +1432,17 @@ function dashRender(){
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   const sec=(ic,t,h,tab)=>'<div class="dash-sec" data-tab="'+tab+'"><span class="si">'+ic+'</span><b>'+t+'</b>'+(h?'<span class="h">'+h+'</span>':'')+'</div>';
   $('dGrid').innerHTML=
-    sec('🧾','Onboarding','MSD & MADD · counted cards only · by Creating in TWCMS · use the year box','onb')+
+    sec('🧾','Onboarding','MSD & MADD · counted cards only · by Creating in TWCMS · Period + Department filters at the top','onb')+
     box('o1','Onboarding overview','New card = blank Reason for reissue · a person (same name + address) counts one new card — the latest · C-Declared = not activated · 9-Closed = closed',true)+
     box('o2','New onboarding: MSD vs MADD','New cards per month by department',true)+
     box('o3','Card activation rate','Activated (incl. later closed) vs C-Declared')+
     box('o4','Top 5 onboarding staff','Counted cards by staff · new + re-issue')+
-    sec('📈','Monthly trends','cards issued vs delivered · use the year box','del')+
+    sec('📈','Monthly trends','cards issued vs delivered · by month in the Period','del')+
     box('c0','Cards issued vs Delivered','Issued = cards by create date month · Delivered = records with status Delivered, by delivery month',true)+
-    sec('💵','Collections & fee income','Late Payment and Interest Rate pages · each chart has its own year box','col')+
+    sec('💵','Collections & fee income','Late Payment and Interest Rate pages · by month in the Period','col')+
     box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = Repayment date',true)+
-    box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · use the year box to filter',true)+
-    sec('🚚','Delivery operations','follows the Period filter at the top','del')+
+    box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · months in the Period',true)+
+    sec('🚚','Delivery operations','cards issued and delivery records in the Period','del')+
     box('c1','Delivery status','Cards issued in the period, by latest delivery status')+
     box('c2','Pending cards by age','Days since the card was issued (not yet delivered)')+
     box('c3','Deliveries over time','Records with status Delivered, by delivery date',true)+
@@ -1466,15 +1477,12 @@ function dashRender(){
     const years=[...new Set(allKeys.map(k=>k.slice(0,4)))].sort().reverse();
     const nowY=String(new Date().getFullYear()); if(!years.includes(nowY)) years.unshift(nowY);
     if(DASH.year===undefined||(DASH.year&&!years.includes(DASH.year))) DASH.year=nowY;
-    const Y=DASH.year, scope=Y||'all years', keys=dashMonthKeys(Y,allKeys), idx={}; keys.forEach((k,i)=>idx[k]=i);
+    const scope=scopeP, keys=pKeys(allKeys), idx={}; keys.forEach((k,i)=>idx[k]=i);
     const cre=keys.map(()=>0), del=keys.map(()=>0);
     st.cards.forEach(r=>{ const k=cKey(r); if(k in idx) cre[idx[k]]++; });
     delivRecs.forEach(r=>{ const k=dKey(r); if(k in idx) del[idx[k]]++; });
-    const lbl=keys.map(k=>Y?MON3[+k.slice(5,7)-1]:monLbl(k+'-01')), full=keys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
+    const lbl=pLbl(keys), full=keys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
     const totC=cre.reduce((a,b)=>a+b,0), totD=del.reduce((a,b)=>a+b,0);
-    const head=$('c0').previousElementSibling;
-    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+years.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
-    $('dYear').onchange=function(){ DASH.year=this.value; dashRender(); };
     EXP.c0={h:['Month','Cards issued','Delivered','Delivered vs issued'],r:keys.map((k,i)=>[full[i],cre[i],del[i],pct(del[i],cre[i])]).concat([['Total ('+scope+')',totC,totD,pct(totD,totC)]])};
     const totals='<div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin:2px 0 10px">'+
       '<div><div class="hint" style="margin:0">Total cards issued ('+scope+')</div><div style="font-size:24px;font-weight:800;color:'+P.s2+'">'+totC.toLocaleString()+'</div></div>'+
@@ -1500,15 +1508,12 @@ function dashRender(){
     const mk=r=>String(r.twcms_date).slice(0,7), allK=OK.map(mk);
     const yrs=[...new Set(allK.map(k=>k.slice(0,4)))].sort().reverse(), nowY=String(new Date().getFullYear()); if(!yrs.includes(nowY)) yrs.unshift(nowY);
     if(DASH.onbYear===undefined||(DASH.onbYear&&!yrs.includes(DASH.onbYear))) DASH.onbYear=nowY;
-    const Y=DASH.onbYear, scopeY=Y||'all years', R=OK.filter(r=>!Y||mk(r).slice(0,4)===Y);
-    const head=$('o1').previousElementSibling;
-    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dOnbYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+yrs.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
-    $('dOnbYear').onchange=function(){ DASH.onbYear=this.value; dashRender(); };
+    const DEP=DASH.dept||'', DEPS=DEP?[DEP]:ONB_DEPTS, scopeY=scopeP+(DEP?' · '+DEP:''), R=OK.filter(r=>inRange(r.twcms_date)&&(!DEP||onbDept(r.department)===DEP));
     const n=R.length, NW=R.filter(onbIsNew), by={Activated:0,'Not activated':0,Closed:0}; R.forEach(r=>by[onbState(r.two_status)]++);
     const ever=by.Activated+by.Closed, rate=n?ever/n:0;
     const OCOL={Activated:P.good,'Not activated':P.warn,Closed:P.none}, DCOL={MSD:P.s1,MADD:P.s3};
     $('o1').innerHTML=st.onb===null?'<div class="empty" style="padding:30px 0">The Onboarding table is not set up yet.</div>':
-      '<div class="dash-kpis" style="margin:2px 0 0">'+tile(n,'Total onboarding cards','MSD + MADD · '+scopeY,'var(--accent)','💳')+
+      '<div class="dash-kpis" style="margin:2px 0 0">'+tile(n,'Total onboarding cards',(DEP||'MSD + MADD')+' · '+scopeP,'var(--accent)','💳')+
       tile(NW.length,'New onboarding',pct(NW.length,n)+' of cards · latest per person',P.s1,'🆕',n?NW.length/n:0)+
       tile(n-NW.length,'Re-issue cards',pct(n-NW.length,n)+' of cards',P.s4,'🔁',n?(n-NW.length)/n:0)+
       tile(by.Activated,'Activated','active now',P.good,'✅',n?by.Activated/n:0)+
@@ -1519,10 +1524,10 @@ function dashRender(){
       ['Activated',by.Activated,pct(by.Activated,n)],['Not activated (C-Declared)',by['Not activated'],pct(by['Not activated'],n)],['Closed (9-Closed)',by.Closed,pct(by.Closed,n)],['Activation rate (activated + closed)',ever,pct(ever,n)]]};
 
     // o2) new onboarding by month: MSD vs MADD
-    const keys=dashMonthKeys(Y,NW.map(mk)), mi={}; keys.forEach((k,i)=>mi[k]=i);
+    const keys=pKeys(NW.map(mk)), mi={}; keys.forEach((k,i)=>mi[k]=i);
     const ser={MSD:keys.map(()=>0),MADD:keys.map(()=>0)}; NW.forEach(r=>{ const k=mk(r), d=onbDept(r.department); if(k in mi&&ser[d]) ser[d][mi[k]]++; });
     const tM=ser.MSD.reduce((a,b)=>a+b,0), tA=ser.MADD.reduce((a,b)=>a+b,0), many=keys.length>14;
-    const mLbl=keys.map(k=>Y?MON3[+k.slice(5,7)-1]:monLbl(k+'-01')), mFull=keys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
+    const mLbl=pLbl(keys), mFull=keys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
     EXP.o2={h:['Month','MSD new onboarding','MADD new onboarding','Total'],r:keys.map((k,i)=>[mFull[i],ser.MSD[i],ser.MADD[i],ser.MSD[i]+ser.MADD[i]]).concat([['Total ('+scopeY+')',tM,tA,tM+tA]])};
     if(st.onb===null) empty('o2','The Onboarding table is not set up yet.');
     else if(!tM&&!tA) empty('o2','No new onboarding cards in '+scopeY+'.');
@@ -1530,20 +1535,20 @@ function dashRender(){
       const dstat=(d,v)=>'<div style="flex:1 1 150px;border-radius:12px;padding:10px 14px;background:linear-gradient(135deg,color-mix(in srgb,'+DCOL[d]+' 14%,var(--bg)),var(--bg) 75%);border:1px solid color-mix(in srgb,'+DCOL[d]+' 30%,transparent);position:relative;overflow:hidden">'+
         '<span style="position:absolute;left:0;top:0;bottom:0;width:4px;background:'+DCOL[d]+'"></span><div style="font-size:12px;font-weight:700;color:'+DCOL[d]+'">'+d+'</div>'+
         '<div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:24px;font-weight:800">'+v.toLocaleString()+'</span><span class="hint" style="margin:0">new cards · '+pct(v,tM+tA)+'</span></div></div>';
-      $('o2').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 12px">'+dstat('MSD',tM)+dstat('MADD',tA)+
+      $('o2').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 12px">'+DEPS.map(d=>dstat(d,d==='MSD'?tM:tA)).join('')+
         '<div style="flex:1 1 150px;border-radius:12px;padding:10px 14px;color:#fff;background:linear-gradient(120deg,#00324f,#004973 55%,#0a7bb5)"><div style="font-size:12px;font-weight:700;opacity:.85">TOTAL NEW ('+scopeY.toUpperCase()+')</div><div style="font-size:24px;font-weight:800">'+(tM+tA).toLocaleString()+'</div></div></div>'+
         '<div style="position:relative;height:290px"><canvas></canvas></div>';
       const vL={id:'o2lbl',afterDatasetsDraw(ch){ if(many) return; const c=ch.ctx; c.save(); c.font='600 10px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
         ch.data.datasets.forEach((ds,k)=>{ const m=ch.getDatasetMeta(k); if(m.hidden) return; m.data.forEach((b,i)=>{ if(ds.data[i]) c.fillText(ds.data[i],b.x,b.y-5); }); }); c.restore(); }};
       DASH.charts.push(new Chart($('o2').querySelector('canvas'),{type:'bar',plugins:[vL],
-        data:{labels:mLbl,datasets:[{label:'MSD',data:ser.MSD,...bar(P.s1)},{label:'MADD',data:ser.MADD,...bar(P.s3)}]},
+        data:{labels:mLbl,datasets:DEPS.map(d=>({label:d,data:ser[d],...bar(DCOL[d])}))},
         options:{maintainAspectRatio:false,layout:{padding:{top:16}},interaction:{mode:'index',intersect:false},
           scales:{x:{...axis,grid:{display:false},ticks:{...axis.ticks,autoSkip:false,maxRotation:60,minRotation:many?45:0,font:{size:many?10:12}}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
           plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{title:it=>mFull[it[0].dataIndex],footer:it=>{const i=it[0].dataIndex,t=ser.MSD[i]+ser.MADD[i];return 'Total: '+t+' · MSD '+pct(ser.MSD[i],t)+' · MADD '+pct(ser.MADD[i],t);}}}}}}));
     }
 
     // o3) card activation rate — donut + per department
-    const dRate=ONB_DEPTS.map(d=>{ const x=R.filter(r=>onbDept(r.department)===d), a=x.filter(r=>onbState(r.two_status)!=='Not activated').length; return {d,t:x.length,a,on:x.filter(r=>onbState(r.two_status)==='Activated').length,cl:x.filter(r=>onbState(r.two_status)==='Closed').length}; });
+    const dRate=DEPS.map(d=>{ const x=R.filter(r=>onbDept(r.department)===d), a=x.filter(r=>onbState(r.two_status)!=='Not activated').length; return {d,t:x.length,a,on:x.filter(r=>onbState(r.two_status)==='Activated').length,cl:x.filter(r=>onbState(r.two_status)==='Closed').length}; });
     EXP.o3={h:['Department','Cards','Activated','Not activated','Closed','Activation rate'],r:dRate.map(x=>[x.d,x.t,x.on,x.t-x.a,x.cl,pct(x.a,x.t)]).concat([['Total',n,by.Activated,by['Not activated'],by.Closed,pct(ever,n)]])};
     if(st.onb===null) empty('o3','The Onboarding table is not set up yet.');
     else if(!n) empty('o3','No onboarding cards in '+scopeY+'.');
@@ -1581,14 +1586,11 @@ function dashRender(){
     const iv=r=>Number(r.interest_fee||0), lv=r=>Number(r.late_fee||0);
     const fYears=[...new Set(ALLF.map(r=>String(r.month).slice(0,4)))].sort().reverse();
     if(DASH.feeYear && !fYears.includes(DASH.feeYear)) DASH.feeYear='';
-    const FY=DASH.feeYear||'', F=ALLF.filter(r=>!FY||String(r.month).slice(0,4)===FY), scopeL=FY||'all years';
-    const head=$('f1').previousElementSibling;
-    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dFeeYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+fYears.map(y=>'<option'+(y===FY?' selected':'')+'>'+y+'</option>').join('')+'</select>');
-    $('dFeeYear').onchange=function(){ DASH.feeYear=this.value; dashRender(); };
+    const F=ALLF.filter(r=>inMon(String(r.month).slice(0,7))), scopeL=scopeP;
     EXP.f1={h:['Month','Interest Fee (USD)','Late Payment Fee (USD)','Total (USD)'],r:F.map(r=>[monLbl(r.month),iv(r),lv(r),iv(r)+lv(r)])};
     if(F.length){ const ti=F.reduce((a,r)=>a+iv(r),0), tl=F.reduce((a,r)=>a+lv(r),0); EXP.f1.r.push(['Total ('+scopeL+')',ti,tl,ti+tl]); }
     if(st.fees===null){ $('f1').innerHTML='<div class="empty" style="padding:30px 0">The fee table is not set up yet.</div>'; }
-    else if(!F.length){ $('f1').innerHTML='<div class="empty" style="padding:30px 0">No fees entered yet — add them on the Interest Rate page.</div>'; }
+    else if(!F.length){ $('f1').innerHTML='<div class="empty" style="padding:30px 0">'+(ALLF.length?'No fees for '+scopeP+'.':'No fees entered yet — add them on the Interest Rate page.')+'</div>'; }
     else {
       const ti=F.reduce((a,r)=>a+iv(r),0), tl=F.reduce((a,r)=>a+lv(r),0);
       const stat=(l,v,c)=>'<div><div class="hint" style="margin:0">'+l+'</div><div style="font-size:22px;font-weight:800'+(c?';color:'+c:'')+'">'+v+'</div></div>';
@@ -1622,19 +1624,16 @@ function dashRender(){
     const yrs=[...new Set(lpKeys.map(k=>k.slice(0,4)))].sort().reverse();
     const nowY=String(new Date().getFullYear()); if(!yrs.includes(nowY)) yrs.unshift(nowY);
     if(DASH.lateYear===undefined||(DASH.lateYear&&!yrs.includes(DASH.lateYear))) DASH.lateYear=nowY;
-    const Y=DASH.lateYear, scopeY=Y||'all years', mkeys=dashMonthKeys(Y,lpKeys), mi={}; mkeys.forEach((k,i)=>mi[k]=i);
+    const scopeY=scopeP, mkeys=pKeys(lpKeys), mi={}; mkeys.forEach((k,i)=>mi[k]=i);
     const late=mkeys.map(()=>0), rep=mkeys.map(()=>0);
     LP.forEach(r=>{ const a=lateKey(r), b=repaidKey(r); if(a in mi) late[mi[a]]++; if(b in mi) rep[mi[b]]++; });
-    const mLbl=mkeys.map(k=>Y?MON3[+k.slice(5,7)-1]:monLbl(k+'-01')), mFull=mkeys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
+    const mLbl=pLbl(mkeys), mFull=mkeys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
     const n=mkeys.length, tL=late.reduce((a,b)=>a+b,0), tR=rep.reduce((a,b)=>a+b,0);
     // 3-month cases (late month in the chosen year, or all)
-    const three=LP.filter(r=>lpFull(r.late_count)&&(!Y||(lateKey(r)||'').slice(0,4)===Y));
+    const three=LP.filter(r=>lpFull(r.late_count)&&inMon(lateKey(r)));
     const grp={Resolved:three.filter(r=>r.status==='Done repayment'),Outstanding:three.filter(r=>r.status==='In Processing'||r.status==='Loan Recovery'),'Write Off':three.filter(r=>r.status==='Write Off')};
     const amt=a=>a.reduce((x,r)=>x+lpAmt(r),0), gCol={Resolved:P.good,Outstanding:P.crit,'Write Off':P.none};
     const gKeys=Object.keys(grp).filter(k=>k!=='Write Off'||grp[k].length);
-    const head=$('l1').previousElementSibling;
-    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dLateYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+yrs.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
-    $('dLateYear').onchange=function(){ DASH.lateYear=this.value; dashRender(); };
     EXP.l1={h:['Month','Late payment cases','Repayment cases'],r:mkeys.map((k,i)=>[mFull[i],late[i],rep[i]]).concat([['Total ('+scopeY+')',tL,tR],[],
       ['3-month cases ('+scopeY+')','Cases','Amount (USD)']]).concat(gKeys.map(k=>[k,grp[k].length,amt(grp[k])])).concat([['Total',three.length,amt(three)]])};
     if(st.late===null){ $('l1').innerHTML='<div class="empty" style="padding:30px 0">The Late Payment table is not set up yet.</div>'; }
@@ -1846,6 +1845,7 @@ async function settingsUsers(){
     ['Late Payment — add, upload, update status',Y,Y],
     ['Late Payment — edit Repayment date',N,Y],
     ['Late Payment — remove a case',N,Y],
+    ['Onboarding — add, upload, edit, remove (incl. select & delete many)',Y,Y],
     ['Dashboard',Y,Y],
     ['My Profile — view & edit own profile',Y,Y],
     ['Settings — Branch Code, Unit, Card Status lists',N,Y],
