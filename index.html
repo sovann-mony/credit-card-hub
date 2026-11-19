@@ -1373,7 +1373,7 @@ async function dashLoad(){
   const [c,s]=await Promise.all([fetchAll('merchant_card_detail','id,cardholder_name,create_date,reason_for_reissue'),
     fetchAll('submissions','id,card_ref,delivery_card_status,delivery_name,staff_id,branch_code,delivery_unit,delivery_date,created_at')]);
   if(c.error||s.error){ $('dKpi').innerHTML='<div class="empty">'+escHtml((c.error||s.error).message)+'</div>'; return; }
-  const [fz,lz,oz]=await Promise.all([fetchAll('fee_monthly','id,month,interest_fee,late_fee'),fetchAll('late_payment','id,credit_name,late_count,late_months,min_due,full_amount,status,repayment_date,action_log,updated_at'),
+  const [fz,lz,oz]=await Promise.all([fetchAll('fee_monthly','id,month,interest_fee,late_fee'),fetchAll('late_payment','id,credit_name,late_count,late_months,min_due,full_amount,status,repayment_date,person_in_charge,onboarding_by,action_log,updated_at'),
     fetchAll('onboarding','id,customer_name,address,twcms_date,two_status,reason_for_reissue,staff_name,department,created_at')]);
   DASH.state={cards:c.data||[],subs:s.data||[],fees:fz.error?null:(fz.data||[]),late:lz.error?null:(lz.data||[]),onb:oz.error?null:(oz.data||[]),range:dashRange()};
   dashRender();
@@ -1426,8 +1426,8 @@ function dashRender(){
     tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
 
   // ---------- layout ----------
-  const DC={o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
-  const tabOf=id=>id[0]==='o'?'onb':(id==='l1'||id==='f1')?'col':'del';
+  const DC={o5:P.warn,o6:P.s4,k1:P.crit,k2:P.warn,k3:P.s1,o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
+  const tabOf=id=>id[0]==='o'?'onb':(id==='l1'||id==='f1'||id[0]==='k')?'col':'del';
   const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" data-tab="'+tabOf(id)+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   const sec=(ic,t,h,tab)=>'<div class="dash-sec" data-tab="'+tab+'"><span class="si">'+ic+'</span><b>'+t+'</b>'+(h?'<span class="h">'+h+'</span>':'')+'</div>';
@@ -1437,10 +1437,15 @@ function dashRender(){
     box('o2','New onboarding: MSD vs MADD','New cards per month by department',true)+
     box('o3','Card activation rate','Activated (incl. later closed) vs C-Declared')+
     box('o4','Top 5 onboarding staff','Counted cards by staff · new + re-issue')+
+    box('o5','Not-activated cards by age','C-Declared cards · days since Creating in TWCMS · follow up the oldest first',true)+
+    box('o6','Onboarding staff performance','Cards and activation quality by staff · counted cards in the Period',true)+
     sec('📈','Monthly trends','cards issued vs delivered · by month in the Period','del')+
     box('c0','Cards issued vs Delivered','Issued = cards by create date month · Delivered = records with status Delivered, by delivery month',true)+
     sec('💵','Collections & fee income','Late Payment and Interest Rate pages · by month in the Period','col')+
+    box('k1','Collections overview','Open cases and Loan Recovery = right now · other totals = the Period',true)+
     box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = Repayment date',true)+
+    box('k2','Early warning — merchants at 2 late months','Open cases that will be blocked next month (full repayment) if still unpaid · right now',true)+
+    box('k3','Person in charge performance','Late payment cases with Months late in the Period',true)+
     box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · months in the Period',true)+
     sec('🚚','Delivery operations','cards issued and delivery records in the Period','del')+
     box('c1','Delivery status','Cards issued in the period, by latest delivery status')+
@@ -1609,6 +1614,114 @@ function dashRender(){
           scales:{x:{...axis,stacked:true,grid:{display:false},ticks:{...axis.ticks,maxRotation:60,minRotation:F.length>12?45:0,autoSkip:false,font:{size:10}}},
                   y:{...axis,stacked:true,beginAtZero:true,grace:'6%',ticks:{...axis.ticks,callback:v=>money0(v)}}},
           plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{label:c=>' '+c.dataset.label+': '+money(c.raw),footer:it=>'Total: '+money(monthTotals[it[0].dataIndex])}}}}}));
+    } }
+
+  // o5) not-activated (C-Declared) cards by age since Creating in TWCMS
+  { const ALL=st.onb||[], CN=onbCount(ALL), DEP=DASH.dept||'';
+    const today=dParse(localISO(new Date()));
+    const NA=ALL.filter(r=>CN.set.has(String(r.id))&&onbState(r.two_status)==='Not activated'&&inRange(r.twcms_date)&&(!DEP||onbDept(r.department)===DEP))
+      .map(r=>{ const d=dParse(String(r.twcms_date)); return Object.assign({},r,{_age:d?Math.max(0,Math.round((today-d)/864e5)):0}); }).sort((a,b)=>b._age-a._age);
+    const BK=[['0–30 days',0,30,P.warn],['31–60 days',31,60,P.serious],['61–90 days',61,90,P.crit],['90+ days',91,1e9,'#7f1d1d']];
+    const cnt=BK.map(b=>NA.filter(r=>r._age>=b[1]&&r._age<=b[2]).length);
+    EXP.o5={h:['Customer name','Merchant name','Department','Staff name','Creating in TWCMS','Days not activated','Age group','TWO Status'],
+      r:NA.map(r=>[r.customer_name,r.merchant_name||'',onbDept(r.department),r.staff_name||'',fmtD(r.twcms_date),r._age,(BK.find(b=>r._age>=b[1]&&r._age<=b[2])||[''])[0],r.two_status||''])};
+    if(st.onb===null) empty('o5','The Onboarding table is not set up yet.');
+    else if(!NA.length) empty('o5','No C-Declared (not activated) cards in '+scopeP+(DEP?' · '+DEP:'')+' 🎉');
+    else {
+      $('o5').innerHTML='<div class="dash-split"><div style="min-width:0"><div style="display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 10px">'+
+          BK.map((b,i)=>'<div style="flex:1 1 90px;border-radius:10px;padding:8px 10px;border:1px solid color-mix(in srgb,'+b[3]+' 35%,transparent);background:color-mix(in srgb,'+b[3]+' 9%,var(--bg))">'+
+            '<div style="font-size:11.5px;font-weight:700;color:'+b[3]+'">'+b[0]+'</div><div style="font-size:22px;font-weight:800">'+cnt[i]+'</div></div>').join('')+'</div>'+
+          '<div style="position:relative;height:200px"><canvas></canvas></div></div>'+
+        '<div style="min-width:0"><div class="hint" style="margin:0 0 6px;font-weight:600">Oldest not-activated cards — follow up first</div>'+
+          '<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Customer</th><th>Staff</th><th>Dept</th><th style="text-align:right">Days</th></tr></thead><tbody>'+
+          NA.slice(0,8).map(r=>{ const b=BK.find(x=>r._age>=x[1]&&r._age<=x[2]);
+            return '<tr><td style="font-weight:600">'+escHtml(r.customer_name)+'<div class="hint" style="margin:0;font-size:11px">'+escHtml(r.merchant_name||'')+'</div></td><td>'+escHtml(r.staff_name||'—')+'</td><td>'+onbDept(r.department)+'</td>'+
+              '<td style="text-align:right"><span class="pill" style="background:color-mix(in srgb,'+b[3]+' 15%,transparent);color:'+b[3]+';font-weight:700">'+r._age+'</span></td></tr>'; }).join('')+
+          '</tbody></table></div>'+(NA.length>8?'<div class="hint" style="margin:6px 0 0">Showing 8 of '+NA.length+' — Excel has the full list.</div>':'')+'</div></div>';
+      DASH.charts.push(new Chart($('o5').querySelector('canvas'),{type:'bar',
+        data:{labels:BK.map(b=>b[0]),datasets:[{label:'Not activated cards',data:cnt,...bar(P.warn),backgroundColor:BK.map(b=>b[3]),maxBarThickness:56}]},
+        options:{maintainAspectRatio:false,layout:{padding:{top:16}},scales:{x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:true,grace:'10%',ticks:{...axis.ticks,precision:0}}},
+          plugins:{legend:{display:false},tooltip:{...tt,callbacks:{label:c=>' '+c.parsed.y+' cards ('+pct(c.parsed.y,NA.length)+')'}}}},
+        plugins:[{id:'o5lbl',afterDatasetsDraw(ch){ const c=ch.ctx; c.save(); c.font='700 11px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
+          ch.getDatasetMeta(0).data.forEach((b,i)=>{ if(cnt[i]) c.fillText(cnt[i],b.x,b.y-6); }); c.restore(); }}]}));
+    } }
+
+  // o6) onboarding staff performance — quantity and activation quality
+  { const ALL=st.onb||[], CN=onbCount(ALL), DEP=DASH.dept||'';
+    const R=ALL.filter(r=>CN.set.has(String(r.id))&&inRange(r.twcms_date)&&(!DEP||onbDept(r.department)===DEP));
+    const S={}; R.forEach(r=>{ const nm=normTxt(r.staff_name)||'(no staff name)', k=nm.toLowerCase(); const x=S[k]=S[k]||{nm,n:0,re:0,on:0,na:0,cl:0,d:{}};
+      onbIsNew(r)?x.n++:x.re++; const s=onbState(r.two_status); s==='Activated'?x.on++:s==='Closed'?x.cl++:x.na++; const dd=onbDept(r.department); x.d[dd]=(x.d[dd]||0)+1; });
+    const rows=Object.values(S).map(x=>Object.assign(x,{t:x.n+x.re,rate:(x.n+x.re)?(x.on+x.cl)/(x.n+x.re):0})).sort((a,b)=>b.t-a.t||b.rate-a.rate);
+    EXP.o6={h:['#','Staff name','Department','New onboarding','Re-issue','Total cards','Activated','Not activated (C-Declared)','Closed','Activation rate'],
+      r:rows.map((x,i)=>[i+1,x.nm,ONB_DEPTS.filter(d=>x.d[d]).map(d=>d+' '+x.d[d]).join(' / '),x.n,x.re,x.t,x.on,x.na,x.cl,pct(x.on+x.cl,x.t)])};
+    if(st.onb===null) empty('o6','The Onboarding table is not set up yet.');
+    else if(!rows.length) empty('o6','No onboarding cards in '+scopeP+'.');
+    else { const rc=r=>r>=0.8?P.good:r>=0.6?P.warn:P.crit;
+      $('o6').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr><th>#</th><th>Staff name</th><th>Department</th><th style="text-align:right">New</th><th style="text-align:right">Re-issue</th><th style="text-align:right">Total</th>'+
+        '<th style="text-align:right">Activated</th><th style="text-align:right">Not activated</th><th style="text-align:right">Closed</th><th style="min-width:170px">Activation rate</th></tr></thead><tbody>'+
+        rows.slice(0,10).map((x,i)=>{ const p=Math.round(x.rate*100), c=rc(x.rate);
+          return '<tr><td>'+(['🥇','🥈','🥉'][i]||i+1)+'</td><td style="font-weight:600">'+escHtml(x.nm)+'</td><td>'+ONB_DEPTS.filter(d=>x.d[d]).map(d=>'<span class="pill" style="background:color-mix(in srgb,'+(d==='MSD'?P.s1:P.s3)+' 14%,transparent);color:'+(d==='MSD'?P.s1:P.s3)+';margin-right:3px">'+d+' '+x.d[d]+'</span>').join('')+'</td>'+
+            '<td style="text-align:right">'+x.n+'</td><td style="text-align:right">'+x.re+'</td><td style="text-align:right;font-weight:700">'+x.t+'</td><td style="text-align:right">'+x.on+'</td>'+
+            '<td style="text-align:right;'+(x.na?'color:'+P.serious+';font-weight:700':'')+'">'+x.na+'</td><td style="text-align:right">'+x.cl+'</td>'+
+            '<td><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:8px;border-radius:4px;background:var(--line);overflow:hidden"><div style="width:'+p+'%;height:100%;background:'+c+';border-radius:4px"></div></div><span style="width:38px;text-align:right;font-weight:700;color:'+c+'">'+p+'%</span></div></td></tr>'; }).join('')+
+        '</tbody></table></div><div class="hint" style="margin:6px 0 0">Activation rate = activated + closed ÷ total · green 80%+ · amber 60–79% · red under 60%'+(rows.length>10?' · showing top 10 of '+rows.length+' — Excel has everyone':'')+'</div>';
+    } }
+
+  // k) collections: totals, 2-month early warning, person in charge
+  { const LP=st.late||[];
+    const lateKey=r=>lpParseMonths(r.late_months)[0]||null;
+    const evMonth=(r,stt)=>{ const ev=(Array.isArray(r.action_log)?r.action_log:[]).filter(e=>e.status===stt).map(e=>e.at).sort()[0]; const d=localISO(ev||r.updated_at); return d?d.slice(0,7):null; };
+    const repaidKey=r=>{ if(r.status!=='Done repayment') return null; if(!lpFull(r.late_count)) return lateKey(r); if(r.repayment_date) return String(r.repayment_date).slice(0,7); return evMonth(r,'Done repayment'); };
+    const woKey=r=>r.status==='Write Off'?evMonth(r,'Write Off'):null;
+    const sum=a=>a.reduce((x,r)=>x+lpAmt(r),0);
+    const OPEN=LP.filter(r=>lpOpen(r.status)), REC=OPEN.filter(r=>r.status==='Loan Recovery');
+    const LATE=LP.filter(r=>inMon(lateKey(r))), REP=LP.filter(r=>inMon(repaidKey(r))), WO=LP.filter(r=>inMon(woKey(r)));
+    const FEES=(st.fees||[]).filter(r=>inMon(String(r.month).slice(0,7))), feeTot=FEES.reduce((a,r)=>a+Number(r.interest_fee||0)+Number(r.late_fee||0),0);
+    const WARN=OPEN.filter(r=>Number(r.late_count)===2).sort((a,b)=>lpAmt(b)-lpAmt(a));
+    EXP.k1={h:['Measure','Cases','Amount (USD)','Note'],r:[['Open cases (now)',OPEN.length,sum(OPEN),'In Processing + Loan Recovery'],['In Loan Recovery (now)',REC.length,sum(REC),'3+ months, account blocked'],
+      ['Late payment cases ('+scopeP+')',LATE.length,sum(LATE),'by Months late'],['Repaid ('+scopeP+')',REP.length,sum(REP),'Done repayment'],['Written off ('+scopeP+')',WO.length,sum(WO),'by month status became Write Off'],
+      ['Repayment rate ('+scopeP+')',pct(REP.length,LATE.length),'',''],['Fee income ('+scopeP+')','',feeTot,'Interest Fee + Late Payment Fee']]};
+    if(st.late===null) empty('k1','The Late Payment table is not set up yet.');
+    else $('k1').innerHTML='<div class="dash-kpis" style="margin:2px 0 0">'+
+      tile(OPEN.length,'Open cases','now · '+money0(sum(OPEN))+' outstanding',P.crit,'📂')+
+      tile(REC.length,'In Loan Recovery','now · '+money0(sum(REC)),P.serious,'🔒')+
+      tile(WARN.length,'At 2 late months','now · blocked next month if unpaid',P.warn,'⚠️')+
+      tile(LATE.length,'Late payment cases',scopeP+' · '+money0(sum(LATE)),P.s1,'⏰')+
+      tile(REP.length,'Repaid',scopeP+' · '+money0(sum(REP)),P.good,'✅',LATE.length?Math.min(1,REP.length/LATE.length):0)+
+      tile(pct(REP.length,LATE.length),'Repayment rate','repaid ÷ late cases',P.s3,'📈',LATE.length?Math.min(1,REP.length/LATE.length):0)+
+      tile(WO.length,'Written off',scopeP+' · '+money0(sum(WO)),P.none,'🗂️')+
+      (st.fees===null?'':tile(money0(feeTot),'Fee income',scopeP+' · interest + late fee',P.s2,'💰'))+'</div>';
+
+    // k2) early warning
+    EXP.k2={h:['Credit name','Late payment charge (months)','Months late','Minimum due 20% (USD)','Person in charge','Onboarding by','Last update'],
+      r:WARN.map(r=>[r.credit_name,Number(r.late_count),r.late_months||'',r.min_due==null?'':Number(r.min_due),r.person_in_charge||'',r.onboarding_by||'',fmtD(r.updated_at)])};
+    if(st.late===null) empty('k2','The Late Payment table is not set up yet.');
+    else if(!WARN.length) empty('k2','No open cases at 2 late months right now 🎉');
+    else $('k2').innerHTML='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:9px 12px;border-radius:10px;background:color-mix(in srgb,'+P.warn+' 12%,var(--bg));border:1px solid color-mix(in srgb,'+P.warn+' 35%,transparent)">'+
+        '<span style="font-size:18px">⚠️</span><span><b>'+WARN.length+' merchant'+(WARN.length>1?'s':'')+'</b> will reach 3 late months next month — account blocked and <b>full repayment</b> required. Collect at least the 20% minimum before the 15th.</span>'+
+        '<span style="margin-left:auto;font-weight:800;font-size:16px">'+money(sum(WARN))+'</span></div>'+
+      '<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Credit name</th><th>Months late</th><th style="text-align:right">Minimum due 20%</th><th>Person in charge</th><th>Onboarding by</th><th>Last update</th></tr></thead><tbody>'+
+      WARN.slice(0,15).map(r=>'<tr><td style="font-weight:600">'+escHtml(r.credit_name)+'</td><td>'+escHtml(r.late_months||'')+'</td><td style="text-align:right;font-weight:700">'+money(r.min_due||0)+'</td>'+
+        '<td>'+(normTxt(r.person_in_charge)?escHtml(r.person_in_charge):'<span style="color:'+P.crit+';font-weight:600">Not assigned</span>')+'</td><td>'+escHtml(r.onboarding_by||'')+'</td><td style="white-space:nowrap">'+escHtml(fmtD(r.updated_at)||'')+'</td></tr>').join('')+
+      '</tbody></table></div>'+(WARN.length>15?'<div class="hint" style="margin:6px 0 0">Showing 15 of '+WARN.length+' — Excel has the full list.</div>':'');
+
+    // k3) person in charge performance (cases late in the period)
+    const PC={}; LATE.forEach(r=>{ const nm=normTxt(r.person_in_charge)||'(not assigned)', k=nm.toLowerCase(); const x=PC[k]=PC[k]||{nm,t:0,open:0,rec:0,done:0,wo:0,out:0,paid:0};
+      x.t++; if(r.status==='Done repayment'){ x.done++; x.paid+=lpAmt(r); } else if(r.status==='Write Off') x.wo++; else { x.open++; x.out+=lpAmt(r); if(r.status==='Loan Recovery') x.rec++; } });
+    const pcs=Object.values(PC).sort((a,b)=>b.t-a.t||b.done-a.done);
+    EXP.k3={h:['Person in charge','Cases ('+scopeP+')','Open','of which Loan Recovery','Done repayment','Write Off','Resolve rate','Outstanding (USD)','Repaid (USD)'],
+      r:pcs.map(x=>[x.nm,x.t,x.open,x.rec,x.done,x.wo,pct(x.done,x.t),x.out,x.paid])};
+    if(st.late===null) empty('k3','The Late Payment table is not set up yet.');
+    else if(!pcs.length) empty('k3','No late payment cases in '+scopeP+'.');
+    else { const rc=r=>r>=0.7?P.good:r>=0.4?P.warn:P.crit;
+      $('k3').innerHTML='<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Person in charge</th><th style="text-align:right">Cases</th><th style="text-align:right">Open</th><th style="text-align:right">Loan Recovery</th><th style="text-align:right">Done</th><th style="text-align:right">Write Off</th>'+
+        '<th style="text-align:right">Outstanding</th><th style="text-align:right">Repaid</th><th style="min-width:160px">Resolve rate</th></tr></thead><tbody>'+
+        pcs.map(x=>{ const r=x.t?x.done/x.t:0, p=Math.round(r*100), c=rc(r);
+          return '<tr><td style="font-weight:600">'+(x.nm==='(not assigned)'?'<span style="color:'+P.crit+'">Not assigned</span>':escHtml(x.nm))+'</td><td style="text-align:right;font-weight:700">'+x.t+'</td>'+
+            '<td style="text-align:right">'+x.open+'</td><td style="text-align:right;'+(x.rec?'color:'+P.serious+';font-weight:700':'')+'">'+x.rec+'</td><td style="text-align:right">'+x.done+'</td><td style="text-align:right">'+x.wo+'</td>'+
+            '<td style="text-align:right;font-weight:700">'+money0(x.out)+'</td><td style="text-align:right">'+money0(x.paid)+'</td>'+
+            '<td><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:8px;border-radius:4px;background:var(--line);overflow:hidden"><div style="width:'+p+'%;height:100%;background:'+c+';border-radius:4px"></div></div><span style="width:38px;text-align:right;font-weight:700;color:'+c+'">'+p+'%</span></div></td></tr>'; }).join('')+
+        '</tbody></table></div><div class="hint" style="margin:6px 0 0">Cases with Months late in '+scopeP+' · Resolve rate = Done repayment ÷ cases · Outstanding = 20% minimum (under 3 months) or full amount (3+ months) of open cases</div>';
     } }
 
   // l1) late payment vs repayment (monthly) + 3-month cases resolved vs outstanding
@@ -1780,10 +1893,10 @@ function dashRender(){
       '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
 
   // Excel buttons
-  const names={o1:'onboarding_overview',o2:'new_onboarding_msd_vs_madd',o3:'card_activation_rate',o4:'top_onboarding_staff',c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  const names={o5:'not_activated_cards_by_age',o6:'onboarding_staff_performance',k1:'collections_overview',k2:'early_warning_2_late_months',k3:'person_in_charge_performance',o1:'onboarding_overview',o2:'new_onboarding_msd_vs_madd',o3:'card_activation_rate',o4:'top_onboarding_staff',c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
   $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
     if(!e||!e.r.length) return popup('Nothing to export for this period.');
-    if(id==='f1'||id==='l1'||id[0]==='o') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
+    if(id==='f1'||id==='l1'||id[0]==='o'||id[0]==='k') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
     let rows=e.r; if(id==='c6'&&reasons.length){ rows=rows.concat([[],['Top reissue reasons','Cards']]).concat(reasons.map(x=>[x.label,x.c])); }
     exportXlsx(names[id]+'.xlsx',e.h,rows); });
 }
