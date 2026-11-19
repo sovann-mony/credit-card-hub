@@ -1344,7 +1344,7 @@ async function viewDashboard(){
 function dashTabShow(){
   const t=DASH.tab; document.querySelectorAll('#dTabs [data-dt]').forEach(b=>b.classList.toggle('on',b.getAttribute('data-dt')===t));
   if($('dDeptWrap')) $('dDeptWrap').style.display=t==='onb'?'':'none';
-  if($('dKpi')) $('dKpi').style.display=t==='del'?'':'none';
+  if($('dKpi')) $('dKpi').style.display=$('dKpi').innerHTML?'':'none';   // only for loading / error messages
   document.querySelectorAll('#dGrid [data-tab]').forEach(e=>e.style.display=e.getAttribute('data-tab')===t?'':'none');
 }
 function dashRange(){
@@ -1411,13 +1411,17 @@ function dashRender(){
   const share=n=>cards.length?n/cards.length:0;
   // On Hold = cards whose latest record is On Hold, counted by the date that record was submitted
   const hold=st.cards.filter(r=>{const l=LATEST[String(r.id)];return l&&isHold(l.delivery_card_status)&&inRange(localISO(l.created_at));}).length;
-  $('dKpi').innerHTML=tile(cards.length,'Total cards','issued in period','var(--accent)','💳')+tile(cards.filter(isNew).length,'New cards',pct(cards.filter(isNew).length,cards.length)+' of cards',P.s1,'🆕')+
+  $('dKpi').innerHTML='';
+  const nNew=cards.filter(isNew).length;
+  const D0EXP={h:['Measure ('+label+')','Value','Share / note'],r:[['Total cards issued',cards.length,''],['New cards',nNew,pct(nNew,cards.length)],['Reissues',cards.length-nNew,pct(cards.length-nNew,cards.length)],
+    ['Delivered',delivered,pct(delivered,cards.length)],['Pending (not delivered yet)',pending,pct(pending,cards.length)],['On Hold (by submit date)',hold,''],['Submissions (delivery records)',subs.length,'']]};
+  const KPI_DEL=tile(cards.length,'Total cards','issued in period','var(--accent)','💳')+tile(cards.filter(isNew).length,'New cards',pct(cards.filter(isNew).length,cards.length)+' of cards',P.s1,'🆕')+
     tile(cards.filter(r=>!isNew(r)).length,'Reissues',pct(cards.filter(r=>!isNew(r)).length,cards.length)+' of cards',P.s4,'🔁')+
     tile(delivered,'Delivered',pct(delivered,cards.length)+' of cards',P.good,'✅',share(delivered))+tile(pending,'Pending','not delivered yet',P.serious,'⏳',share(pending))+
     tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
 
   // ---------- layout ----------
-  const DC={o5:P.warn,o6:P.s4,k1:P.crit,k3:P.s1,o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
+  const DC={d0:'var(--accent)',o5:P.warn,o6:P.s4,k1:P.crit,k3:P.s1,o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
   const tabOf=id=>id[0]==='o'?'onb':(id==='l1'||id==='f1'||id[0]==='k')?'col':'del';
   const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" data-tab="'+tabOf(id)+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
@@ -1430,6 +1434,8 @@ function dashRender(){
     box('o4','Top 5 onboarding staff','Counted cards by staff · new + re-issue')+
     box('o5','Not-activated cards by age','C-Declared cards · days since Creating in TWCMS · follow up the oldest first',true)+
     box('o6','Onboarding staff performance','Cards and activation quality by staff · counted cards in the Period',true)+
+    sec('🚚','Card Delivery','cards issued in the Period and their latest delivery status','del')+
+    box('d0','Delivery overview','Total / New / Reissues = cards by create date · Delivered, Pending = latest status of those cards · On Hold = by submit date · Submissions = delivery records',true)+
     sec('📈','Monthly trends','cards issued vs delivered · by month in the Period','del')+
     box('c0','Cards issued vs Delivered','Issued = cards by create date month · Delivered = records with status Delivered, by delivery month',true)+
     sec('💵','Collections & fee income','Late Payment and Interest Rate pages · by month in the Period','col')+
@@ -1446,7 +1452,8 @@ function dashRender(){
     box('c6','New vs reissue cards','Cards issued per period',true)+
     box('c7','Top delivery staff','Delivery records in the period',true);
   dashTabShow();
-  const EXP={};
+  const EXP={d0:D0EXP};
+  $('d0').innerHTML='<div class="dash-kpis" style="margin:2px 0 0">'+KPI_DEL+'</div>';
   const canvas=(id,h)=>{ $(id).innerHTML='<div style="position:relative;height:'+(h||260)+'px"><canvas></canvas></div>'; return $(id).querySelector('canvas'); };
   const empty=(id,msg)=>{ $(id).innerHTML='<div class="empty" style="padding:30px 0">'+(msg||'No data for this period.')+'</div>'; };
   Chart.defaults.animation=false; Chart.defaults.font.family=getComputedStyle(document.body).fontFamily; Chart.defaults.font.size=12; Chart.defaults.color=P.muted;
@@ -1870,7 +1877,7 @@ function dashRender(){
       '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
 
   // Excel buttons
-  const names={o5:'not_activated_cards_by_age',o6:'onboarding_staff_performance',k1:'collections_overview',k3:'person_in_charge_performance',o1:'onboarding_overview',o2:'new_onboarding_msd_vs_madd',o3:'card_activation_rate',o4:'top_onboarding_staff',c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  const names={d0:'delivery_overview',o5:'not_activated_cards_by_age',o6:'onboarding_staff_performance',k1:'collections_overview',k3:'person_in_charge_performance',o1:'onboarding_overview',o2:'new_onboarding_msd_vs_madd',o3:'card_activation_rate',o4:'top_onboarding_staff',c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
   $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
     if(!e||!e.r.length) return popup('Nothing to export for this period.');
     if(id==='f1'||id==='l1'||id[0]==='o'||id[0]==='k') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
