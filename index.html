@@ -1098,6 +1098,16 @@ async function dashLoad(){
   DASH.state={cards:c.data||[],subs:s.data||[],fees:fz.error?null:(fz.data||[]),late:lz.error?null:(lz.data||[]),range:dashRange()};
   dashRender();
 }
+/* month keys (yyyy-mm) for a year, or for every month between the earliest and latest data when Y is '' (All years) */
+function dashMonthKeys(Y,keysWithData){
+  const now=new Date(), nowK=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0'), nowY=String(now.getFullYear());
+  let a,b;
+  if(Y){ const inY=keysWithData.filter(k=>k.slice(0,4)===Y).sort(); a=Y+'-01'; b=inY.length?inY[inY.length-1]:null; if(Y===nowY) b=b&&b>nowK?b:nowK; if(!b) return []; }
+  else { const all=keysWithData.slice().sort(); if(!all.length) return []; a=all[0]; b=all[all.length-1]>nowK?all[all.length-1]:nowK; }
+  const out=[]; let y=+a.slice(0,4), m=+a.slice(5,7);
+  while(true){ const k=y+'-'+String(m).padStart(2,'0'); out.push(k); if(k>=b||out.length>240) break; m++; if(m>12){m=1;y++;} }
+  return out;
+}
 function dashRender(){
   const st=DASH.state; if(!st||!$('dGrid')) return;
   DASH.charts.forEach(ch=>{try{ch.destroy();}catch(e){}}); DASH.charts=[];
@@ -1124,7 +1134,7 @@ function dashRender(){
   const share=n=>cards.length?n/cards.length:0;
   // On Hold = cards whose latest record is On Hold, counted by the date that record was submitted
   const hold=st.cards.filter(r=>{const l=LATEST[String(r.id)];return l&&isHold(l.delivery_card_status)&&inRange(localISO(l.created_at));}).length;
-  $('dKpi').innerHTML=tile(cards.length,'Total cards','created in period','var(--accent)','💳')+tile(cards.filter(isNew).length,'New cards',pct(cards.filter(isNew).length,cards.length)+' of cards',P.s1,'🆕')+
+  $('dKpi').innerHTML=tile(cards.length,'Total cards','issued in period','var(--accent)','💳')+tile(cards.filter(isNew).length,'New cards',pct(cards.filter(isNew).length,cards.length)+' of cards',P.s1,'🆕')+
     tile(cards.filter(r=>!isNew(r)).length,'Reissues',pct(cards.filter(r=>!isNew(r)).length,cards.length)+' of cards',P.s4,'🔁')+
     tile(delivered,'Delivered',pct(delivered,cards.length)+' of cards',P.good,'✅',share(delivered))+tile(pending,'Pending','not delivered yet',P.serious,'⏳',share(pending))+
     tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
@@ -1134,15 +1144,15 @@ function dashRender(){
   const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   $('dGrid').innerHTML=
-    box('c0','Cards created vs Delivered','Created = cards by create month · Delivered = records with status Delivered, by delivery month',true)+
+    box('c0','Cards issued vs Delivered','Issued = cards by create date month · Delivered = records with status Delivered, by delivery month',true)+
     box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = Repayment date',true)+
     box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · use the year box to filter',true)+
-    box('c1','Delivery status','Cards created in the period, by latest delivery status')+
-    box('c2','Pending cards by age','Days since the card was created (not yet delivered)')+
+    box('c1','Delivery status','Cards issued in the period, by latest delivery status')+
+    box('c2','Pending cards by age','Days since the card was issued (not yet delivered)')+
     box('c3','Deliveries over time','Records with status Delivered, by delivery date',true)+
     box('c4','Deliveries by unit','Delivery records in the period')+
     box('c5','Top 10 branches','Delivery records by branch code · delivered rate in tooltip')+
-    box('c6','New vs reissue cards','Cards created per period',true)+
+    box('c6','New vs reissue cards','Cards issued per period',true)+
     box('c7','Top delivery staff','Delivery records in the period',true);
   const EXP={};
   const canvas=(id,h)=>{ $(id).innerHTML='<div style="position:relative;height:'+(h||260)+'px"><canvas></canvas></div>'; return $(id).querySelector('canvas'); };
@@ -1153,38 +1163,40 @@ function dashRender(){
   const legend={position:'bottom',labels:{color:P.text,usePointStyle:true,pointStyle:'rectRounded',boxWidth:10,padding:14}};
   const bar=(color)=>({backgroundColor:color,borderRadius:4,borderSkipped:'start',maxBarThickness:34,borderColor:P.surface,borderWidth:{top:0,right:0,bottom:0,left:0}});
 
-  // 0) cards created (bars) vs delivered (line), by month of the chosen year
-  { const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const delivRecs=st.subs.filter(r=>lc(r.delivery_card_status)==='delivered'&&r.delivery_date);
-    const years=[...new Set(st.cards.map(r=>String(r.create_date||'').slice(0,4)).concat(delivRecs.map(r=>String(r.delivery_date).slice(0,4))).filter(y=>/^\d{4}$/.test(y)))].sort().reverse();
+  // 0) cards issued (bars) vs delivered (line), by month — one year or All years
+  { const delivRecs=st.subs.filter(r=>lc(r.delivery_card_status)==='delivered'&&r.delivery_date);
+    const cKey=r=>{ const d=String(r.create_date||''); return /^\d{4}-\d{2}/.test(d)?d.slice(0,7):null; }, dKey=r=>String(r.delivery_date).slice(0,7);
+    const allKeys=st.cards.map(cKey).concat(delivRecs.map(dKey)).filter(Boolean);
+    const years=[...new Set(allKeys.map(k=>k.slice(0,4)))].sort().reverse();
     const nowY=String(new Date().getFullYear()); if(!years.includes(nowY)) years.unshift(nowY);
-    if(!DASH.year||!years.includes(DASH.year)) DASH.year=nowY;
-    const Y=DASH.year, cre=Array(12).fill(0), del=Array(12).fill(0);
-    st.cards.forEach(r=>{ const d=String(r.create_date||''); if(d.slice(0,4)===Y) cre[+d.slice(5,7)-1]++; });
-    delivRecs.forEach(r=>{ const d=String(r.delivery_date); if(d.slice(0,4)===Y) del[+d.slice(5,7)-1]++; });
-    let last=-1; for(let i=11;i>=0;i--) if(cre[i]||del[i]){ last=i; break; }
-    if(Y===nowY) last=Math.max(last,new Date().getMonth());
-    const n=last+1, totC=cre.reduce((a,b)=>a+b,0), totD=del.reduce((a,b)=>a+b,0);
+    if(DASH.year===undefined||(DASH.year&&!years.includes(DASH.year))) DASH.year=nowY;
+    const Y=DASH.year, scope=Y||'all years', keys=dashMonthKeys(Y,allKeys), idx={}; keys.forEach((k,i)=>idx[k]=i);
+    const cre=keys.map(()=>0), del=keys.map(()=>0);
+    st.cards.forEach(r=>{ const k=cKey(r); if(k in idx) cre[idx[k]]++; });
+    delivRecs.forEach(r=>{ const k=dKey(r); if(k in idx) del[idx[k]]++; });
+    const lbl=keys.map(k=>Y?MON3[+k.slice(5,7)-1]:monLbl(k+'-01')), full=keys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
+    const totC=cre.reduce((a,b)=>a+b,0), totD=del.reduce((a,b)=>a+b,0);
     const head=$('c0').previousElementSibling;
-    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none">'+years.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
+    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+years.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
     $('dYear').onchange=function(){ DASH.year=this.value; dashRender(); };
-    EXP.c0={h:['Month','Cards created','Delivered','Delivered vs created'],r:MON.slice(0,Math.max(n,0)).map((m,i)=>[m+' '+Y,cre[i],del[i],pct(del[i],cre[i])]).concat([['Total '+Y,totC,totD,pct(totD,totC)]])};
+    EXP.c0={h:['Month','Cards issued','Delivered','Delivered vs issued'],r:keys.map((k,i)=>[full[i],cre[i],del[i],pct(del[i],cre[i])]).concat([['Total ('+scope+')',totC,totD,pct(totD,totC)]])};
     const totals='<div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin:2px 0 10px">'+
-      '<div><div class="hint" style="margin:0">Total cards created ('+Y+')</div><div style="font-size:24px;font-weight:800;color:'+P.s2+'">'+totC.toLocaleString()+'</div></div>'+
-      '<div><div class="hint" style="margin:0">Total delivered ('+Y+')</div><div style="font-size:24px;font-weight:800;color:'+P.s1+'">'+totD.toLocaleString()+'</div></div>'+
-      '<div><div class="hint" style="margin:0">Delivered vs created</div><div style="font-size:24px;font-weight:800">'+pct(totD,totC)+'</div></div></div>';
-    if(!n||(!totC&&!totD)){ $('c0').innerHTML=totals+'<div class="empty" style="padding:30px 0">No cards or deliveries in '+Y+'.</div>'; }
+      '<div><div class="hint" style="margin:0">Total cards issued ('+scope+')</div><div style="font-size:24px;font-weight:800;color:'+P.s2+'">'+totC.toLocaleString()+'</div></div>'+
+      '<div><div class="hint" style="margin:0">Total delivered ('+scope+')</div><div style="font-size:24px;font-weight:800;color:'+P.s1+'">'+totD.toLocaleString()+'</div></div>'+
+      '<div><div class="hint" style="margin:0">Delivered vs issued</div><div style="font-size:24px;font-weight:800">'+pct(totD,totC)+'</div></div></div>';
+    if(!keys.length||(!totC&&!totD)){ $('c0').innerHTML=totals+'<div class="empty" style="padding:30px 0">No cards or deliveries in '+scope+'.</div>'; }
     else {
       $('c0').innerHTML=totals+'<div style="position:relative;height:300px"><canvas></canvas></div>';
-      const ptLabels={id:'ptLabels',afterDatasetsDraw(ch){ const c=ch.ctx, meta=ch.getDatasetMeta(1); if(meta.hidden) return; c.save(); c.font='600 11px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
+      const many=keys.length>14;
+      const ptLabels={id:'ptLabels',afterDatasetsDraw(ch){ const c=ch.ctx, meta=ch.getDatasetMeta(1); if(meta.hidden) return; c.save(); c.font='600 '+(many?10:11)+'px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
         meta.data.forEach((pt,i)=>{ const v=ch.data.datasets[1].data[i]; if(v==null) return; c.fillText(v,pt.x,pt.y-10); }); c.restore(); }};
       DASH.charts.push(new Chart($('c0').querySelector('canvas'),{type:'bar',plugins:[ptLabels],
-        data:{labels:MON.slice(0,n),datasets:[
-          {type:'bar',label:'Cards created',data:cre.slice(0,n),...bar(P.s2),maxBarThickness:46,order:2},
-          {type:'line',label:'Delivered',data:del.slice(0,n),borderColor:P.s1,backgroundColor:P.s1,borderWidth:2.5,cubicInterpolationMode:'monotone',pointRadius:4.5,pointHoverRadius:6,pointBorderColor:P.surface,pointBorderWidth:2,order:1}]},
+        data:{labels:lbl,datasets:[
+          {type:'bar',label:'Cards issued',data:cre,...bar(P.s2),maxBarThickness:46,order:2},
+          {type:'line',label:'Delivered',data:del,borderColor:P.s1,backgroundColor:P.s1,borderWidth:2.5,cubicInterpolationMode:'monotone',pointRadius:many?3:4.5,pointHoverRadius:6,pointBorderColor:P.surface,pointBorderWidth:2,order:1}]},
         options:{maintainAspectRatio:false,layout:{padding:{top:18}},interaction:{mode:'index',intersect:false},
-          scales:{x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
-          plugins:{legend:{...legend,position:'top',labels:{...legend.labels,sort:(a,b)=>a.datasetIndex-b.datasetIndex}},tooltip:{...tt,callbacks:{title:it=>it[0].label+' '+Y,footer:it=>{const i=it[0].dataIndex;return 'Delivered vs created: '+pct(del[i],cre[i]);}}}}}}));
+          scales:{x:{...axis,grid:{display:false},ticks:{...axis.ticks,autoSkip:false,maxRotation:60,minRotation:many?45:0,font:{size:many?10:12}}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
+          plugins:{legend:{...legend,position:'top',labels:{...legend.labels,sort:(a,b)=>a.datasetIndex-b.datasetIndex}},tooltip:{...tt,callbacks:{title:it=>full[it[0].dataIndex],footer:it=>{const i=it[0].dataIndex;return 'Delivered vs issued: '+pct(del[i],cre[i]);}}}}}}));
     } }
 
   // f1) interest & late payment fee: monthly stacked, with a year filter
@@ -1229,28 +1241,30 @@ function dashRender(){
       if(r.repayment_date) return String(r.repayment_date).slice(0,7);
       const ev=(Array.isArray(r.action_log)?r.action_log:[]).filter(e=>e.status==='Done repayment').map(e=>e.at).sort()[0];
       const d=localISO(ev||r.updated_at); return d?d.slice(0,7):null; };
-    const yrs=[...new Set(LP.map(lateKey).concat(LP.map(repaidKey)).filter(Boolean).map(k=>k.slice(0,4)))].sort().reverse();
+    const lpKeys=LP.map(lateKey).concat(LP.map(repaidKey)).filter(Boolean);
+    const yrs=[...new Set(lpKeys.map(k=>k.slice(0,4)))].sort().reverse();
     const nowY=String(new Date().getFullYear()); if(!yrs.includes(nowY)) yrs.unshift(nowY);
-    if(!DASH.lateYear||!yrs.includes(DASH.lateYear)) DASH.lateYear=nowY;
-    const Y=DASH.lateYear, late=Array(12).fill(0), rep=Array(12).fill(0);
-    LP.forEach(r=>{ const a=lateKey(r), b=repaidKey(r); if(a&&a.slice(0,4)===Y) late[+a.slice(5,7)-1]++; if(b&&b.slice(0,4)===Y) rep[+b.slice(5,7)-1]++; });
-    let last=-1; for(let i=11;i>=0;i--) if(late[i]||rep[i]){ last=i; break; } if(Y===nowY) last=Math.max(last,new Date().getMonth());
-    const n=last+1, tL=late.reduce((a,b)=>a+b,0), tR=rep.reduce((a,b)=>a+b,0);
-    // 3-month cases (late months in the chosen year)
-    const three=LP.filter(r=>lpFull(r.late_count)&&(lateKey(r)||'').slice(0,4)===Y);
+    if(DASH.lateYear===undefined||(DASH.lateYear&&!yrs.includes(DASH.lateYear))) DASH.lateYear=nowY;
+    const Y=DASH.lateYear, scopeY=Y||'all years', mkeys=dashMonthKeys(Y,lpKeys), mi={}; mkeys.forEach((k,i)=>mi[k]=i);
+    const late=mkeys.map(()=>0), rep=mkeys.map(()=>0);
+    LP.forEach(r=>{ const a=lateKey(r), b=repaidKey(r); if(a in mi) late[mi[a]]++; if(b in mi) rep[mi[b]]++; });
+    const mLbl=mkeys.map(k=>Y?MON3[+k.slice(5,7)-1]:monLbl(k+'-01')), mFull=mkeys.map(k=>MON3[+k.slice(5,7)-1]+' '+k.slice(0,4));
+    const n=mkeys.length, tL=late.reduce((a,b)=>a+b,0), tR=rep.reduce((a,b)=>a+b,0);
+    // 3-month cases (late month in the chosen year, or all)
+    const three=LP.filter(r=>lpFull(r.late_count)&&(!Y||(lateKey(r)||'').slice(0,4)===Y));
     const grp={Resolved:three.filter(r=>r.status==='Done repayment'),Outstanding:three.filter(r=>r.status==='In Processing'||r.status==='Loan Recovery'),'Write Off':three.filter(r=>r.status==='Write Off')};
     const amt=a=>a.reduce((x,r)=>x+lpAmt(r),0), gCol={Resolved:P.good,Outstanding:P.crit,'Write Off':P.none};
     const gKeys=Object.keys(grp).filter(k=>k!=='Write Off'||grp[k].length);
     const head=$('l1').previousElementSibling;
-    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dLateYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none">'+yrs.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
+    head.querySelector('[data-dx]').insertAdjacentHTML('beforebegin','<select id="dLateYear" style="width:auto;padding:5px 8px;margin-right:6px;flex:none"><option value="">All years</option>'+yrs.map(y=>'<option'+(y===Y?' selected':'')+'>'+y+'</option>').join('')+'</select>');
     $('dLateYear').onchange=function(){ DASH.lateYear=this.value; dashRender(); };
-    EXP.l1={h:['Month','Late payment cases','Repayment cases'],r:MON3.slice(0,Math.max(n,0)).map((m,i)=>[m+' '+Y,late[i],rep[i]]).concat([['Total '+Y,tL,tR],[],
-      ['3-month cases ('+Y+')','Cases','Amount (USD)']]).concat(gKeys.map(k=>[k,grp[k].length,amt(grp[k])])).concat([['Total',three.length,amt(three)]])};
+    EXP.l1={h:['Month','Late payment cases','Repayment cases'],r:mkeys.map((k,i)=>[mFull[i],late[i],rep[i]]).concat([['Total ('+scopeY+')',tL,tR],[],
+      ['3-month cases ('+scopeY+')','Cases','Amount (USD)']]).concat(gKeys.map(k=>[k,grp[k].length,amt(grp[k])])).concat([['Total',three.length,amt(three)]])};
     if(st.late===null){ $('l1').innerHTML='<div class="empty" style="padding:30px 0">The Late Payment table is not set up yet.</div>'; }
     else if(!LP.length){ $('l1').innerHTML='<div class="empty" style="padding:30px 0">No late payment cases yet — add them on the Late Payment page.</div>'; }
     else {
       const stat=(l,v,c)=>'<div><div class="hint" style="margin:0">'+l+'</div><div style="font-size:22px;font-weight:800'+(c?';color:'+c:'')+'">'+v+'</div></div>';
-      $('l1').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin:2px 0 10px">'+stat('Late payment cases ('+Y+')',tL,P.s1)+stat('Repayment cases ('+Y+')',tR,P.s2)+stat('Repaid vs late',pct(tR,tL))+'</div>'+
+      $('l1').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px 28px;margin:2px 0 10px">'+stat('Late payment cases ('+scopeY+')',tL,P.s1)+stat('Repayment cases ('+scopeY+')',tR,P.s2)+stat('Repaid vs late',pct(tR,tL))+'</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:18px">'+
           '<div style="flex:2 1 420px;min-width:0"><div class="hint" style="margin:0 0 4px;font-weight:600">Monthly: Late Payment vs Repayment cases</div><div style="position:relative;height:300px"><canvas id="l1m"></canvas></div></div>'+
           '<div style="flex:1 1 300px;min-width:0"><div class="hint" style="margin:0 0 4px;font-weight:600">Late Payment (3 months): Resolved vs Outstanding</div>'+
@@ -1267,14 +1281,14 @@ function dashRender(){
                 '<div style="border-radius:12px;padding:10px 14px;color:#fff;background:linear-gradient(120deg,#00324f,#004973 55%,#0a7bb5);box-shadow:0 4px 12px rgba(0,73,115,.25);display:flex;align-items:center;gap:8px">'+
                   '<span style="font-size:12px;opacity:.85;font-weight:600;text-transform:uppercase;letter-spacing:.4px">Total</span><span style="font-size:20px;font-weight:800;margin-left:6px">'+three.length+'</span><span style="font-size:12px;opacity:.85">case'+(three.length===1?'':'s')+'</span>'+
                   '<span style="margin-left:auto;font-size:15px;font-weight:800">'+money(amt(three))+'</span></div></div></div>'
-              :'<div class="empty" style="padding:30px 0">No 3-month cases in '+Y+'.</div>')+'</div></div>';
+              :'<div class="empty" style="padding:30px 0">No 3-month cases in '+scopeY+'.</div>')+'</div></div>';
       const vLbl={id:'lpBarLbl',afterDatasetsDraw(ch){ const c=ch.ctx; c.save(); c.font='600 10px '+Chart.defaults.font.family; c.fillStyle=P.text; c.textAlign='center';
         ch.data.datasets.forEach((ds,k)=>{ const m=ch.getDatasetMeta(k); if(m.hidden) return; m.data.forEach((b,i)=>{ if(ds.data[i]) c.fillText(ds.data[i],b.x,b.y-5); }); }); c.restore(); }};
       DASH.charts.push(new Chart($('l1m'),{type:'bar',plugins:[vLbl],
-        data:{labels:MON3.slice(0,n),datasets:[{label:'Late Payment',data:late.slice(0,n),...bar(P.s1)},{label:'Repayment',data:rep.slice(0,n),...bar(P.s2)}]},
+        data:{labels:mLbl,datasets:[{label:'Late Payment',data:late,...bar(P.s1)},{label:'Repayment',data:rep,...bar(P.s2)}]},
         options:{maintainAspectRatio:false,layout:{padding:{top:16}},interaction:{mode:'index',intersect:false},
-          scales:{x:{...axis,grid:{display:false}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
-          plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{title:it=>it[0].label+' '+Y}}}}}));
+          scales:{x:{...axis,grid:{display:false},ticks:{...axis.ticks,autoSkip:false,maxRotation:60,minRotation:n>14?45:0,font:{size:n>14?10:12}}},y:{...axis,beginAtZero:true,grace:'8%',ticks:{...axis.ticks,precision:0}}},
+          plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{title:it=>mFull[it[0].dataIndex]}}}}}));
       if(three.length){
         const pctLbl={id:'lpPct',afterDatasetsDraw(ch){ const c=ch.ctx, m=ch.getDatasetMeta(0), tot=three.length; c.save(); c.font='700 12px '+Chart.defaults.font.family; c.fillStyle='#fff'; c.textAlign='center'; c.textBaseline='middle';
           m.data.forEach((a,i)=>{ const v=ch.data.datasets[0].data[i]; if(!v) return; const p=a.tooltipPosition(); c.fillText((v*100/tot).toFixed(1)+'%',p.x,p.y); });
@@ -1363,7 +1377,7 @@ function dashRender(){
   const NR={}; cards.forEach(r=>{ const k=keyOf(r.create_date); if(!k)return; NR[k]=NR[k]||{n:0,r:0}; isNew(r)?NR[k].n++:NR[k].r++; });
   const RS={}; cards.filter(r=>!isNew(r)).forEach(r=>{ const k=String(r.reason_for_reissue).trim(); const key=k.toLowerCase(); RS[key]=RS[key]||{label:k,c:0}; RS[key].c++; });
   const reasons=Object.values(RS).sort((a,b)=>b.c-a.c);
-  $('c6').previousElementSibling.querySelector('.hint').textContent='Cards created per '+gName+' · top reissue reasons on the right';
+  $('c6').previousElementSibling.querySelector('.hint').textContent='Cards issued per '+gName+' · top reissue reasons on the right';
   EXP.c6={h:[gran==='day'?'Date':gran==='week'?'Week starting':'Month','New','Reissue','Total'],r:keys.map(k=>[kLabel(k),(NR[k]||{}).n||0,(NR[k]||{}).r||0,((NR[k]||{}).n||0)+((NR[k]||{}).r||0)])};
   if(!keys.length||!Object.keys(NR).length) empty('c6'); else {
     $('c6').innerHTML='<div class="dash-split"><div style="position:relative;height:240px;min-width:0"><canvas></canvas></div>'+
@@ -1388,7 +1402,7 @@ function dashRender(){
       '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
 
   // Excel buttons
-  const names={c0:'created_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  const names={c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
   $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
     if(!e||!e.r.length) return popup('Nothing to export for this period.');
     if(id==='f1'||id==='l1') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
