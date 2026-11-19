@@ -905,13 +905,13 @@ async function viewLate(){
     chips(); const rows=cur();
     if(!rows.length){ $('lpList').innerHTML='<div class="empty">'+(ROWS.length?'No cases match the filter.':'No late payment cases yet.')+'</div>'; return; }
     $('lpList').innerHTML='<div class="hint" style="margin:0 0 6px">'+rows.length+' case'+(rows.length>1?'s':'')+' · minimum due (under 3 months) <b>'+money(rows.filter(r=>!lpFull(r.late_count)).reduce((a,r)=>a+Number(r.min_due||0),0))+'</b> · full amount (3+ months) <b>'+money(rows.filter(r=>lpFull(r.late_count)).reduce((a,r)=>a+Number(r.full_amount||0),0))+'</b></div>'+
-      '<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr><th>Credit name</th><th>Late (months)</th><th style="text-align:right">Amount due</th><th style="min-width:130px">Months late</th><th>Onboarding by</th><th>Person in charge</th><th>Status</th><th style="min-width:180px">Remark</th><th>Last update</th><th>Actions</th></tr></thead><tbody>'+
+      '<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr><th>Credit name</th><th>Late (months)</th><th style="text-align:right">Amount due</th><th style="min-width:130px">Months late</th><th>Onboarding by</th><th>Person in charge</th><th>Status</th><th>Repayment date</th><th style="min-width:180px">Remark</th><th>Last update</th><th>Actions</th></tr></thead><tbody>'+
       rows.map(r=>{ const n=Number(r.late_count||0), nc=n>=3?'#dc2626':n>=2?'#d97706':'#2a78d6';
         const full=lpFull(n), amt=full?r.full_amount:r.min_due;
         return '<tr><td><b>'+escHtml(r.credit_name)+'</b></td>'+
         '<td style="text-align:center"><span class="pill" style="background:color-mix(in srgb,'+nc+' 15%,transparent);color:'+nc+'">'+n+'</span></td>'+
         '<td style="text-align:right;white-space:nowrap">'+(amt==null||amt===''?'<span style="color:var(--danger)">—</span>':'<b>'+money(amt)+'</b>')+'<div class="hint" style="margin:0;font-size:11px">'+(full?'Full amount':'Min. due 20%')+'</div></td>'+
-        '<td>'+escHtml(r.late_months||'')+'</td><td>'+escHtml(r.onboarding_by||'')+'</td><td>'+escHtml(r.person_in_charge||'')+'</td><td>'+lpPill(r.status)+'</td>'+
+        '<td>'+escHtml(r.late_months||'')+'</td><td>'+escHtml(r.onboarding_by||'')+'</td><td>'+escHtml(r.person_in_charge||'')+'</td><td>'+lpPill(r.status)+'</td><td style="white-space:nowrap">'+escHtml(r.status==='Done repayment'?(fmtD(r.repayment_date)||''):'')+'</td>'+
         '<td>'+escHtml(r.remark||'')+'</td><td style="white-space:nowrap">'+escHtml(fmtD(r.updated_at)||'')+'</td>'+
         '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-lpe="'+r.id+'">Update</button> <button class="btn-xs" style="background:#6a52d9" data-lph="'+r.id+'">History</button>'+
         (admin?' <button class="btn-xs" style="background:var(--danger)" data-lpd="'+r.id+'">Remove</button>':'')+'</td></tr>'; }).join('')+'</tbody></table></div>';
@@ -919,6 +919,7 @@ async function viewLate(){
     $('lpList').querySelectorAll('[data-lpe]').forEach(b=>b.onclick=()=>{ const r=find(b.getAttribute('data-lpe')); if(!r) return;
       editModal('Update case — '+(r.credit_name||''),[
         {key:'status',label:'Status',value:r.status,type:'select',options:LP_STATUS,hint:'Under 3 months = In Processing; 3+ months = Loan Recovery. Change to Done repayment or Write Off when the case is closed. Status changes are kept in History.'},
+      ].concat(admin?[{key:'repayment_date',label:'Repayment date (admin only)',value:r.repayment_date||'',type:'date',hint:'Set automatically when the status becomes Done repayment. Only kept while the status is Done repayment.'}]:[]).concat([
         {key:'late_count',label:'Late payment charge (months)',value:String(r.late_count??'')},
         {key:'late_months',label:'Months late',value:(lpParseMonths(r.late_months)[0]||''),type:'month'},
         {key:'min_due',label:'Minimum due 20% (USD)',value:r.min_due==null?'':String(r.min_due),hint:'Required when under 3 late months.'},
@@ -926,8 +927,9 @@ async function viewLate(){
         {key:'person_in_charge',label:'Person in charge',value:r.person_in_charge},
         {key:'credit_name',label:'Credit name',value:r.credit_name},
         {key:'onboarding_by',label:'Onboarding by',value:r.onboarding_by},
-        {key:'remark',label:'Remark',value:r.remark,type:'textarea'}],async v=>{
+        {key:'remark',label:'Remark',value:r.remark,type:'textarea'}]),async v=>{
           const n=Number(String(v.late_count).trim()), m=parseMoney(v.min_due), fa=parseMoney(v.full_amount);
+          if(admin&&v.repayment_date&&v.repayment_date>localISO(new Date())) return 'Repayment date cannot be in the future.';
           if(!normTxt(v.credit_name)) return 'Credit name is required.';
           if(!/^\d+$/.test(String(v.late_count).trim())) return 'Late payment charge must be a whole number of months.';
           if(isNaN(m)||isNaN(fa)) return 'Amounts must be numbers, e.g. 125.50';
@@ -935,7 +937,8 @@ async function viewLate(){
           if(!lpFull(n)&&m==null) return 'Under 3 late months, enter the Minimum due 20%.';
           let st=v.status; if(st===r.status && lpIsAuto(st) && n!==Number(r.late_count)) st=lpAuto(n);
           const {error}=await sb.from('late_payment').update({credit_name:normTxt(v.credit_name),min_due:m,full_amount:fa,late_count:n,late_months:lpMonthVal(v.late_months),
-            onboarding_by:normTxt(v.onboarding_by)||null,person_in_charge:normTxt(v.person_in_charge)||null,status:st,remark:(v.remark||'').trim()||null}).eq('id',r.id);
+            onboarding_by:normTxt(v.onboarding_by)||null,person_in_charge:normTxt(v.person_in_charge)||null,status:st,remark:(v.remark||'').trim()||null,
+            ...(admin?{repayment_date:st==='Done repayment'?(v.repayment_date||null):null}:{})}).eq('id',r.id);
           if(error) return error.message; popup('Case updated'+(st!==v.status?' — status set to '+st+' (3-month rule).':'.')); load(); });
  });
     $('lpList').querySelectorAll('[data-lph]').forEach(b=>b.onclick=()=>{ const r=find(b.getAttribute('data-lph')); if(!r) return;
@@ -953,7 +956,7 @@ async function viewLate(){
         const {error}=await sb.from('late_payment').delete().eq('id',r.id); if(error) popup(error.message); else load(); }); });
   }
   async function load(){
-    const {data,error}=await fetchAll('late_payment','id,credit_name,min_due,full_amount,late_count,late_months,onboarding_by,person_in_charge,status,remark,action_log,updated_at,created_at');
+    const {data,error}=await fetchAll('late_payment','id,credit_name,min_due,full_amount,late_count,late_months,onboarding_by,person_in_charge,status,repayment_date,remark,action_log,updated_at,created_at');
     if(error){ $('lpList').innerHTML='<div class="empty">'+escHtml(/late_payment|does not exist|schema cache/i.test(error.message)?'The Late Payment table is not set up yet — run supabase_migration_late_payment.sql in Supabase.':error.message)+'</div>'; return; }
     const rank=s=>({'Loan Recovery':0,'In Processing':1,'Write Off':2,'Done repayment':3})[s]??4;
     ROWS=(data||[]).slice().sort((a,b)=>rank(a.status)-rank(b.status)||Number(b.late_count||0)-Number(a.late_count||0)||String(b.updated_at).localeCompare(String(a.updated_at)));
@@ -1036,8 +1039,8 @@ async function viewLate(){
     load(); };
 
   $('lpExport').onclick=()=>{ const rows=cur(); if(!rows.length) return popup('Nothing to export.');
-    exportXlsx('late_payment_cases.xlsx',['Credit name','Late payment charge (months)','Minimum due 20% (USD)','Full amount (USD)','Months late','Onboarding by','Person in charge','Status','Remark','Last update'],
-      rows.map(r=>[r.credit_name,Number(r.late_count||0),r.min_due==null?'':Number(r.min_due),r.full_amount==null?'':Number(r.full_amount),r.late_months||'',r.onboarding_by||'',r.person_in_charge||'',r.status,r.remark||'',fmtD(r.updated_at)])); };
+    exportXlsx('late_payment_cases.xlsx',['Credit name','Late payment charge (months)','Minimum due 20% (USD)','Full amount (USD)','Months late','Onboarding by','Person in charge','Status','Repayment date','Remark','Last update'],
+      rows.map(r=>[r.credit_name,Number(r.late_count||0),r.min_due==null?'':Number(r.min_due),r.full_amount==null?'':Number(r.full_amount),r.late_months||'',r.onboarding_by||'',r.person_in_charge||'',r.status,r.status==='Done repayment'?fmtD(r.repayment_date):'',r.remark||'',fmtD(r.updated_at)])); };
   load();
 }
 
@@ -1091,7 +1094,7 @@ async function dashLoad(){
   const [c,s]=await Promise.all([fetchAll('merchant_card_detail','id,cardholder_name,create_date,reason_for_reissue'),
     fetchAll('submissions','id,card_ref,delivery_card_status,delivery_name,staff_id,branch_code,delivery_unit,delivery_date,created_at')]);
   if(c.error||s.error){ $('dKpi').innerHTML='<div class="empty">'+escHtml((c.error||s.error).message)+'</div>'; return; }
-  const [fz,lz]=await Promise.all([fetchAll('fee_monthly','id,month,interest_fee,late_fee'),fetchAll('late_payment','id,credit_name,late_count,late_months,min_due,full_amount,status,action_log,updated_at')]);
+  const [fz,lz]=await Promise.all([fetchAll('fee_monthly','id,month,interest_fee,late_fee'),fetchAll('late_payment','id,credit_name,late_count,late_months,min_due,full_amount,status,repayment_date,action_log,updated_at')]);
   DASH.state={cards:c.data||[],subs:s.data||[],fees:fz.error?null:(fz.data||[]),late:lz.error?null:(lz.data||[]),range:dashRange()};
   dashRender();
 }
@@ -1132,7 +1135,7 @@ function dashRender(){
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   $('dGrid').innerHTML=
     box('c0','Cards created vs Delivered','Created = cards by create month · Delivered = records with status Delivered, by delivery month',true)+
-    box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = month the status was changed to Done repayment',true)+
+    box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = Repayment date',true)+
     box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · use the year box to filter',true)+
     box('c1','Delivery status','Cards created in the period, by latest delivery status')+
     box('c2','Pending cards by age','Days since the card was created (not yet delivered)')+
@@ -1223,6 +1226,7 @@ function dashRender(){
     // repayment month: under 3 months = same month as the late payment; 3+ months = month the status became Done repayment
     const repaidKey=r=>{ if(r.status!=='Done repayment') return null;
       if(!lpFull(r.late_count)) return lateKey(r);
+      if(r.repayment_date) return String(r.repayment_date).slice(0,7);
       const ev=(Array.isArray(r.action_log)?r.action_log:[]).filter(e=>e.status==='Done repayment').map(e=>e.at).sort()[0];
       const d=localISO(ev||r.updated_at); return d?d.slice(0,7):null; };
     const yrs=[...new Set(LP.map(lateKey).concat(LP.map(repaidKey)).filter(Boolean).map(k=>k.slice(0,4)))].sort().reverse();
@@ -1444,6 +1448,7 @@ async function settingsUsers(){
     ['Interest Rate — view, add, update monthly fees',Y,Y],
     ['Interest Rate — remove a month',N,Y],
     ['Late Payment — add, upload, update status',Y,Y],
+    ['Late Payment — edit Repayment date',N,Y],
     ['Late Payment — remove a case',N,Y],
     ['Dashboard',Y,Y],
     ['My Profile — view & edit own profile',Y,Y],
@@ -2109,6 +2114,7 @@ function makeMockClient(){
     .map((a,i)=>({id:i+1,credit_name:a[0],min_due:a[2]>=3?null:a[1],full_amount:a[2]>=3?a[1]*5:null,late_count:a[2],late_months:a[3],onboarding_by:a[4],person_in_charge:['Dara','Sophea','Dara','Sophea'][i],status:a[5],remark:a[6],created_at:lpNow,updated_at:lpNow,
       action_log:[{at:lpNow,by:'Demo Admin',event:'Case added',status:a[5],late_count:a[2],remark:a[6]}]}));
   const lpTouch=(row,old)=>{ if(!row.status) row.status=Number(row.late_count)>=3?'Loan Recovery':'In Processing'; const t=new Date().toISOString(); row.updated_at=t;
+    if(row.status==='Done repayment'){ if(!row.repayment_date) row.repayment_date=t.slice(0,10); } else row.repayment_date=null;
     const log=(old&&old.action_log)||[]; if(!old||row.status!==old.status||Number(row.late_count)!==Number(old.late_count))
       row.action_log=log.concat([{at:t,by:'Demo Admin',event:old?'Updated':'Case added',status:row.status,late_count:row.late_count,remark:row.remark||''}]); else row.action_log=log; return row; };
   const db={merchant_card_detail:cards, submissions:subs, profiles:profiles, ref_branch:ref_branch, ref_unit:ref_unit, ref_card_status:ref_card_status, fee_monthly:fee_monthly, late_payment:late_payment};
