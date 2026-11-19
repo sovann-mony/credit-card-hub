@@ -2012,6 +2012,7 @@ function settingsHolder(){
   const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
   $('cBar').innerHTML='<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
     '<div style="display:flex;flex-direction:column;flex:1;min-width:200px">'+lab('Card holder')+'<input id="chSearch" placeholder="Search card holder…"></div>'+
+    '<div style="display:flex;flex-direction:column">'+lab('Reason')+'<select id="cReason" style="width:190px"><option value="">All</option><option value="__new">New card (no reason)</option><option value="__re">All re-issues</option></select></div>'+
     '<div style="display:flex;flex-direction:column">'+lab('From (create date)')+'<input type="date" id="cFrom" style="width:150px"></div>'+
     '<div style="display:flex;flex-direction:column">'+lab('To (create date)')+'<input type="date" id="cTo" style="width:150px"></div>'+
     '<div style="display:flex;flex-direction:column">'+lab('Card status')+'<select id="cStatus" style="width:170px"><option value="">All</option><option value="__none">Not yet submitted</option>'+[...new Set(OPTIONS.cardStatus||[])].sort().map(x=>'<option>'+escHtml(x)+'</option>').join('')+'</select></div>'+
@@ -2020,9 +2021,11 @@ function settingsHolder(){
     '<button class="btn-sm" id="cExport" style="background:var(--accent);padding:9px 14px">Export Excel</button></div>';
   function matchRows(){
     const term=$('chSearch').value.trim().toLowerCase();
-    const f=$('cFrom').value,t=$('cTo').value,st=$('cStatus').value;
+    const f=$('cFrom').value,t=$('cTo').value,st=$('cStatus').value,rs=$('cReason').value;
     return CARDS.filter(r=>{
       if(term && !String(r.cardholder_name).toLowerCase().includes(term))return false;
+      const rr=normTxt(r.reason_for_reissue).toLowerCase();
+      if(rs==='__new'){ if(rr)return false; } else if(rs==='__re'){ if(!rr)return false; } else if(rs && rr!==rs)return false;
       const l=LATEST[String(r.id)];
       if(f && (!r.create_date||r.create_date<f))return false;
       if(t && (!r.create_date||r.create_date>t))return false;
@@ -2053,6 +2056,10 @@ function settingsHolder(){
     if(cd.data) cd.data.sort((a,b)=>String(a.cardholder_name).localeCompare(String(b.cardholder_name)));
     if(cd.error){$('chList').innerHTML='<div class="empty">'+escHtml(cd.error.message)+'</div>';return;}
     CARDS=cd.data||[]; LATEST=latestByRef(su.data); { const live=new Set(CARDS.map(x=>String(x.id))); [...CSEL].forEach(id=>{ if(!live.has(id)) CSEL.delete(id); }); }
+    { const rsel=$('cReason'), keep=rsel.value, m=new Map(); CARDS.forEach(c=>{ const t=normTxt(c.reason_for_reissue); if(t&&!m.has(t.toLowerCase())) m.set(t.toLowerCase(),t); });
+      rsel.innerHTML='<option value="">All</option><option value="__new">New card (no reason)</option><option value="__re">All re-issues</option>'+
+        [...m.entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([k,t])=>'<option value="'+escHtml(k)+'">'+escHtml(t)+'</option>').join('');
+      rsel.value=[...rsel.options].some(o=>o.value===keep)?keep:''; }
     const sel=$('cStatus'), have=new Set([...sel.options].map(o=>o.value));
     (su.data||[]).map(s=>s.delivery_card_status).filter(x=>x&&!have.has(x)).forEach(x=>{have.add(x);const o=document.createElement('option');o.textContent=x;sel.appendChild(o);});
     draw();
@@ -2060,7 +2067,8 @@ function settingsHolder(){
   // Conditions are applied when Search is clicked (Search also reloads the latest data).
   $('cSearch').onclick=load;
   ['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')load();}));
-  $('cClear').onclick=()=>{['chSearch','cFrom','cTo','cStatus'].forEach(id=>$(id).value='');load();};
+  $('cReason').onchange=draw;
+  $('cClear').onclick=()=>{['chSearch','cReason','cFrom','cTo','cStatus'].forEach(id=>$(id).value='');load();};
   $('cExport').onclick=()=>{const rows=matchRows().map(r=>{const l=LATEST[String(r.id)]||{};return [r.cardholder_name,(r.reason_for_reissue&&String(r.reason_for_reissue).trim())?'Reissue':'New',r.address,fmtD(r.create_date),r.reason_for_reissue,l.delivery_name,l.delivery_unit,fmtD(l.delivery_date),l.delivery_card_status];});
     if(!rows.length)return popup('Nothing to export for the current filters.');exportXlsx('card_data.xlsx',exportHead,rows);};
   renderUploader($('upWrap'),()=>load());
