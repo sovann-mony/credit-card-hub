@@ -829,6 +829,26 @@ const LP_COLOR={'In Processing':'#d97706','Loan Recovery':'#dc2626','Done repaym
 const lpAuto=n=>Number(n)>=3?'Loan Recovery':'In Processing';
 const lpIsAuto=s=>s==='In Processing'||s==='Loan Recovery';
 const lpOpen=s=>s!=='Done repayment'&&s!=='Write Off';
+const lpMonKey=t=>{ const m=String(t).match(/([A-Za-z]{3})[A-Za-z]*[\s\-\/]*(\d{2,4})/); if(!m) return null; const mi=MON3.findIndex(x=>x.toLowerCase()===m[1].toLowerCase()); if(mi<0) return null;
+  const y=m[2].length===4?m[2]:'20'+m[2]; return y+'-'+String(mi+1).padStart(2,'0'); };
+const lpParseMonths=txt=>[...new Set(String(txt||'').split(/[,;\n]+/).map(lpMonKey).filter(Boolean))].sort();
+const lpMonthsText=keys=>keys.map(k=>monLbl(k+'-01')).join(', ');
+/* month picker: chips + <input type=month> + Add. host gets .getMonths() / .setMonths(); calls onChange(keys) */
+function lpMonthPicker(host,initial,onChange){
+  let keys=lpParseMonths(initial);
+  host.innerHTML='<div class="lpm-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>'+
+    '<div style="display:flex;gap:6px"><input type="month" class="lpm-in" style="flex:1;min-width:0"><button type="button" class="btn-sm lpm-add" style="background:var(--accent);padding:7px 12px;flex:none">+ Add</button></div>';
+  const chips=host.querySelector('.lpm-chips'), inp=host.querySelector('.lpm-in');
+  const draw=()=>{ chips.innerHTML=keys.length?keys.map(k=>'<span class="pill" style="background:color-mix(in srgb,#d97706 15%,transparent);color:#b45309;display:inline-flex;align-items:center;gap:5px">'+monLbl(k+'-01')+
+      '<button type="button" data-k="'+k+'" title="Remove" style="border:0;background:none;color:inherit;cursor:pointer;padding:0;font-weight:700;line-height:1">×</button></span>').join(''):'<span class="hint" style="margin:0">No month selected</span>';
+    chips.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{ keys=keys.filter(x=>x!==b.getAttribute('data-k')); draw(); onChange&&onChange(keys); }); };
+  const add=()=>{ const v=inp.value; if(!/^\d{4}-\d{2}$/.test(v)) return; if(!keys.includes(v)){ keys=keys.concat([v]).sort(); draw(); onChange&&onChange(keys); } inp.value=''; };
+  host.querySelector('.lpm-add').onclick=add; inp.addEventListener('change',add);
+  host.getMonths=()=>keys.slice(); host.setMonths=t=>{ keys=lpParseMonths(t); draw(); };
+  draw(); return host;
+}
+const lpFull=n=>Number(n)>=3;   /* 3+ late months: record the full amount, not the 20% minimum */
+const lpAmt=r=>lpFull(r.late_count)?Number(r.full_amount||0):Number(r.min_due||0);
 const lpPill=s=>'<span class="pill" style="background:color-mix(in srgb,'+(LP_COLOR[s]||'#6b7280')+' 15%,transparent);color:'+(LP_COLOR[s]||'#6b7280')+';white-space:nowrap">'+escHtml(s||'')+'</span>';
 const lpStatusFix=v=>{ const t=normTxt(v).toLowerCase(); if(!t) return '';
   if(/process|negot/.test(t)) return LP_STATUS[0]; if(/recover|block/.test(t)) return LP_STATUS[1]; if(/done|repaid|repayment|resol|^paid|^close/.test(t)) return LP_STATUS[2]; if(/write/.test(t)) return LP_STATUS[3]; return null; };
@@ -841,16 +861,18 @@ async function viewLate(){
       '<div style="font-weight:700;margin-bottom:4px">📌 Rule</div>'+
       '<div style="font-size:13px;line-height:1.55">Merchant must repay at least <b>20% (minimum due) before the 15th</b> to avoid a late payment.<br>'+
       lpPill(LP_STATUS[0])+' under 3 late months — our team takes action to resolve the case with the merchant.<br>'+
-      lpPill(LP_STATUS[1])+' 3 consecutive late months — merchant account is <b>blocked</b>, <b>full repayment</b> required, Loan Recovery Team takes action.<br>'+
+      lpPill(LP_STATUS[1])+' 3 consecutive late months — merchant account is <b>blocked</b>, <b>full repayment</b> required (record the <b>full amount</b>, not 20%), Loan Recovery Team takes action.<br>'+
       lpPill(LP_STATUS[2])+' merchant has repaid. '+lpPill(LP_STATUS[3])+' Loan Recovery still can’t resolve the case.</div></div>'+
     '<div style="display:flex;gap:8px;margin-bottom:10px"><button class="setTab active" data-lt="add">Add case</button><button class="setTab" data-lt="up">Upload file</button></div>'+
     '<div class="card" id="ltAdd" style="padding:14px;margin-bottom:12px">'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
         col('Credit name *','<input id="lpName" placeholder="Merchant / credit name">')+
-        col('Minimum due 20% (USD) *','<input id="lpMin" inputmode="decimal" placeholder="0.00">')+
         col('Late payment charge (months) *','<input id="lpCount" inputmode="numeric" placeholder="e.g. 1">')+
-        col('Months late (which months)','<input id="lpMonths" placeholder="e.g. Sep-26, Oct-26">')+
+        '<div id="lpMinWrap" style="display:flex;flex-direction:column">'+lab('Minimum due 20% (USD) *')+'<input id="lpMin" inputmode="decimal" placeholder="0.00"></div>'+
+        '<div id="lpFullWrap" style="display:none;flex-direction:column">'+lab('Full amount (USD) *')+'<input id="lpFullAmt" inputmode="decimal" placeholder="0.00"></div>'+
+        col('Months late (pick each month)','<div id="lpMonths"></div>')+
         col('Onboarding by','<input id="lpOnb" placeholder="Staff / team">')+
+        col('Person in charge','<input id="lpPic" list="lpPicList" placeholder="Who follows up this case"><datalist id="lpPicList"></datalist>')+
         col('Status','<select id="lpStatus"><option value="">Auto (by late months)</option>'+LP_STATUS.map(x=>'<option>'+x+'</option>').join('')+'</select>')+
       '</div>'+
       '<div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px">'+
@@ -858,7 +880,7 @@ async function viewLate(){
       '<div style="display:flex;align-items:center;gap:10px;margin-top:10px"><button class="btn-sm" id="lpSave" style="background:var(--accent);padding:9px 18px">Save case</button>'+
       '<span class="hint" id="lpAutoHint" style="margin:0"></span></div></div>'+
     '<div class="card" id="ltUp" style="padding:14px;margin-bottom:12px;display:none">'+
-      '<div class="hint" style="margin:0 0 8px">Excel or CSV with columns: <b>Credit name</b> (required), <b>Minimum due</b> (required), <b>Late payment charge</b> = number of months (required), <b>Months late</b>, <b>Onboarding by</b>, <b>Status</b>, <b>Remark</b>.<br>'+
+      '<div class="hint" style="margin:0 0 8px">Excel or CSV with columns: <b>Credit name</b> (required), <b>Late payment charge</b> = number of months (required), <b>Minimum due</b> (required under 3 months), <b>Full amount</b> (required for 3+ months), <b>Months late</b>, <b>Onboarding by</b>, <b>Person in charge</b>, <b>Status</b>, <b>Remark</b>.<br>'+
       'If a credit name already has an <b>open</b> case, that case is <b>updated</b>; otherwise a new case is added. Blank Status = automatic by late months.</div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><input type="file" id="lpFile" accept=".xlsx,.xls,.csv" style="max-width:320px">'+
       '<button class="btn-sm" id="lpUpBtn" style="background:var(--accent);padding:9px 16px" disabled>Upload</button>'+
@@ -866,6 +888,8 @@ async function viewLate(){
     '<div id="lpChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px"></div>'+
     '<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
       col('Credit name','<input id="lpQ" placeholder="Search credit name…">',';flex:1;min-width:200px')+
+      col('Late in month','<input type="month" id="lpFM" style="width:170px">')+
+      col('Person in charge','<select id="lpFP" style="width:190px"><option value="">All</option></select>')+
       col('Status','<select id="lpFS" style="width:220px"><option value="">All</option><option value="__open">All open cases</option>'+LP_STATUS.map(x=>'<option>'+x+'</option>').join('')+'</select>')+
       '<button class="btn-sm" id="lpClear" style="background:#6b7280;padding:9px 14px">Clear</button>'+
       '<button class="btn-sm" id="lpSearch" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
@@ -875,24 +899,33 @@ async function viewLate(){
   // tabs
   $('main').querySelectorAll('[data-lt]').forEach(b=>b.onclick=()=>{ $('main').querySelectorAll('[data-lt]').forEach(x=>x.classList.toggle('active',x===b));
     $('ltAdd').style.display=b.getAttribute('data-lt')==='add'?'':'none'; $('ltUp').style.display=b.getAttribute('data-lt')==='up'?'':'none'; });
-  const showAuto=()=>{ const n=parseInt($('lpCount').value,10); $('lpAutoHint').innerHTML=$('lpStatus').value||isNaN(n)?'':'Status will be: '+lpPill(lpAuto(n)); };
+  const showAuto=()=>{ const n=parseInt($('lpCount').value,10); $('lpAutoHint').innerHTML=$('lpStatus').value||isNaN(n)?'':'Status will be: '+lpPill(lpAuto(n));
+    const full=!isNaN(n)&&lpFull(n); $('lpMinWrap').style.display=full?'none':'flex'; $('lpFullWrap').style.display=full?'flex':'none'; };
   $('lpCount').oninput=showAuto; $('lpStatus').onchange=showAuto;
+  lpMonthPicker($('lpMonths'),'',keys=>{ if(keys.length){ $('lpCount').value=keys.length; } showAuto(); });
 
   let ROWS=[];
-  const cur=()=>{ const q=normTxt($('lpQ').value).toLowerCase(), f=$('lpFS').value;
-    return ROWS.filter(r=>(!q||normTxt(r.credit_name).toLowerCase().includes(q))&&(!f||(f==='__open'?lpOpen(r.status):r.status===f))); };
+  const cur=()=>{ const q=normTxt($('lpQ').value).toLowerCase(), f=$('lpFS').value, pp=$('lpFP').value, fm=$('lpFM').value;
+    return ROWS.filter(r=>(!q||normTxt(r.credit_name).toLowerCase().includes(q))&&(!fm||lpParseMonths(r.late_months).includes(fm))&&(!f||(f==='__open'?lpOpen(r.status):r.status===f))&&
+      (!pp||(pp==='__none'?!normTxt(r.person_in_charge):normTxt(r.person_in_charge).toLowerCase()===pp.toLowerCase()))); };
+  function picOptions(){ const m=new Map(); ROWS.forEach(r=>{const t=normTxt(r.person_in_charge); if(t&&!m.has(t.toLowerCase())) m.set(t.toLowerCase(),t);});
+    const names=[...m.values()].sort((a,b)=>a.localeCompare(b)), sel=$('lpFP'), keep=sel.value;
+    sel.innerHTML='<option value="">All</option>'+names.map(n=>'<option'+(n===keep?' selected':'')+'>'+escHtml(n)+'</option>').join('')+'<option value="__none"'+(keep==='__none'?' selected':'')+'>(not assigned)</option>';
+    $('lpPicList').innerHTML=names.map(n=>'<option value="'+escHtml(n)+'">').join(''); }
   function chips(){ const c={}; ROWS.forEach(r=>c[r.status]=(c[r.status]||0)+1);
     $('lpChips').innerHTML=LP_STATUS.map(x=>'<button class="setTab" data-chip="'+escHtml(x)+'" style="display:flex;align-items:center;gap:6px;border-left:4px solid '+LP_COLOR[x]+'"><b style="font-size:15px">'+(c[x]||0)+'</b> '+escHtml(x)+'</button>').join('');
     $('lpChips').querySelectorAll('[data-chip]').forEach(b=>b.onclick=()=>{ $('lpFS').value=b.getAttribute('data-chip'); render(); }); }
   function render(){
     chips(); const rows=cur();
     if(!rows.length){ $('lpList').innerHTML='<div class="empty">'+(ROWS.length?'No cases match the filter.':'No late payment cases yet.')+'</div>'; return; }
-    $('lpList').innerHTML='<div class="hint" style="margin:0 0 6px">'+rows.length+' case'+(rows.length>1?'s':'')+' · minimum due total <b>'+money(rows.reduce((a,r)=>a+Number(r.min_due||0),0))+'</b></div>'+
-      '<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr><th>Credit name</th><th style="text-align:right">Min. due 20%</th><th>Late (months)</th><th style="min-width:130px">Months late</th><th>Onboarding by</th><th>Status</th><th style="min-width:180px">Remark</th><th>Last update</th><th>Actions</th></tr></thead><tbody>'+
+    $('lpList').innerHTML='<div class="hint" style="margin:0 0 6px">'+rows.length+' case'+(rows.length>1?'s':'')+' · minimum due (under 3 months) <b>'+money(rows.filter(r=>!lpFull(r.late_count)).reduce((a,r)=>a+Number(r.min_due||0),0))+'</b> · full amount (3+ months) <b>'+money(rows.filter(r=>lpFull(r.late_count)).reduce((a,r)=>a+Number(r.full_amount||0),0))+'</b></div>'+
+      '<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr><th>Credit name</th><th>Late (months)</th><th style="text-align:right">Amount due</th><th style="min-width:130px">Months late</th><th>Onboarding by</th><th>Person in charge</th><th>Status</th><th style="min-width:180px">Remark</th><th>Last update</th><th>Actions</th></tr></thead><tbody>'+
       rows.map(r=>{ const n=Number(r.late_count||0), nc=n>=3?'#dc2626':n>=2?'#d97706':'#2a78d6';
-        return '<tr><td><b>'+escHtml(r.credit_name)+'</b></td><td style="text-align:right">'+money(r.min_due)+'</td>'+
+        const full=lpFull(n), amt=full?r.full_amount:r.min_due;
+        return '<tr><td><b>'+escHtml(r.credit_name)+'</b></td>'+
         '<td style="text-align:center"><span class="pill" style="background:color-mix(in srgb,'+nc+' 15%,transparent);color:'+nc+'">'+n+'</span></td>'+
-        '<td>'+escHtml(r.late_months||'')+'</td><td>'+escHtml(r.onboarding_by||'')+'</td><td>'+lpPill(r.status)+'</td>'+
+        '<td style="text-align:right;white-space:nowrap">'+(amt==null||amt===''?'<span style="color:var(--danger)">—</span>':'<b>'+money(amt)+'</b>')+'<div class="hint" style="margin:0;font-size:11px">'+(full?'Full amount':'Min. due 20%')+'</div></td>'+
+        '<td>'+escHtml(r.late_months||'')+'</td><td>'+escHtml(r.onboarding_by||'')+'</td><td>'+escHtml(r.person_in_charge||'')+'</td><td>'+lpPill(r.status)+'</td>'+
         '<td>'+escHtml(r.remark||'')+'</td><td style="white-space:nowrap">'+escHtml(fmtD(r.updated_at)||'')+'</td>'+
         '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-lpe="'+r.id+'">Update</button> <button class="btn-xs" style="background:#6a52d9" data-lph="'+r.id+'">History</button>'+
         (admin?' <button class="btn-xs" style="background:var(--danger)" data-lpd="'+r.id+'">Remove</button>':'')+'</td></tr>'; }).join('')+'</tbody></table></div>';
@@ -901,19 +934,27 @@ async function viewLate(){
       editModal('Update case — '+(r.credit_name||''),[
         {key:'status',label:'Status',value:r.status,type:'select',options:LP_STATUS,hint:'Under 3 months = In Processing; 3+ months = Loan Recovery. Change to Done repayment or Write Off when the case is closed. Status changes are kept in History.'},
         {key:'late_count',label:'Late payment charge (months)',value:String(r.late_count??'')},
-        {key:'late_months',label:'Months late (which months)',value:r.late_months},
-        {key:'min_due',label:'Minimum due 20% (USD)',value:String(r.min_due??'')},
+        {key:'late_months',label:'Months late (pick each month)',value:r.late_months},
+        {key:'min_due',label:'Minimum due 20% (USD)',value:r.min_due==null?'':String(r.min_due),hint:'Required when under 3 late months.'},
+        {key:'full_amount',label:'Full amount (USD)',value:r.full_amount==null?'':String(r.full_amount),hint:'Required at 3+ late months — the 20% minimum no longer applies.'},
+        {key:'person_in_charge',label:'Person in charge',value:r.person_in_charge},
         {key:'credit_name',label:'Credit name',value:r.credit_name},
         {key:'onboarding_by',label:'Onboarding by',value:r.onboarding_by},
         {key:'remark',label:'Remark',value:r.remark,type:'textarea'}],async v=>{
-          const n=Number(String(v.late_count).trim()), m=parseMoney(v.min_due);
+          const n=Number(String(v.late_count).trim()), m=parseMoney(v.min_due), fa=parseMoney(v.full_amount);
           if(!normTxt(v.credit_name)) return 'Credit name is required.';
           if(!/^\d+$/.test(String(v.late_count).trim())) return 'Late payment charge must be a whole number of months.';
-          if(m==null||isNaN(m)) return 'Minimum due must be a number, e.g. 125.50';
+          if(isNaN(m)||isNaN(fa)) return 'Amounts must be numbers, e.g. 125.50';
+          if(lpFull(n)&&fa==null) return 'At 3+ late months, enter the Full amount (the 20% minimum no longer applies).';
+          if(!lpFull(n)&&m==null) return 'Under 3 late months, enter the Minimum due 20%.';
           let st=v.status; if(st===r.status && lpIsAuto(st) && n!==Number(r.late_count)) st=lpAuto(n);
-          const {error}=await sb.from('late_payment').update({credit_name:normTxt(v.credit_name),min_due:m,late_count:n,late_months:normTxt(v.late_months)||null,
-            onboarding_by:normTxt(v.onboarding_by)||null,status:st,remark:(v.remark||'').trim()||null}).eq('id',r.id);
-          if(error) return error.message; popup('Case updated'+(st!==v.status?' — status set to '+st+' (3-month rule).':'.')); load(); }); });
+          const {error}=await sb.from('late_payment').update({credit_name:normTxt(v.credit_name),min_due:m,full_amount:fa,late_count:n,late_months:normTxt(v.late_months)||null,
+            onboarding_by:normTxt(v.onboarding_by)||null,person_in_charge:normTxt(v.person_in_charge)||null,status:st,remark:(v.remark||'').trim()||null}).eq('id',r.id);
+          if(error) return error.message; popup('Case updated'+(st!==v.status?' — status set to '+st+' (3-month rule).':'.')); load(); });
+      // turn the Months late text box into the month picker (it writes back to the hidden box)
+      const mi=d=>document.getElementById('em_'+d), idxM=2, idxC=1, box=mi(idxM);
+      if(box){ box.style.display='none'; const host=document.createElement('div'); box.after(host);
+        lpMonthPicker(host,box.value,keys=>{ box.value=lpMonthsText(keys); if(keys.length&&mi(idxC)) mi(idxC).value=keys.length; }); } });
     $('lpList').querySelectorAll('[data-lph]').forEach(b=>b.onclick=()=>{ const r=find(b.getAttribute('data-lph')); if(!r) return;
       const log=(Array.isArray(r.action_log)?r.action_log:[]).slice().reverse();
       const box=document.createElement('div'); box.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:2600;padding:16px';
@@ -929,30 +970,32 @@ async function viewLate(){
         const {error}=await sb.from('late_payment').delete().eq('id',r.id); if(error) popup(error.message); else load(); }); });
   }
   async function load(){
-    const {data,error}=await fetchAll('late_payment','id,credit_name,min_due,late_count,late_months,onboarding_by,status,remark,action_log,updated_at,created_at');
+    const {data,error}=await fetchAll('late_payment','id,credit_name,min_due,full_amount,late_count,late_months,onboarding_by,person_in_charge,status,remark,action_log,updated_at,created_at');
     if(error){ $('lpList').innerHTML='<div class="empty">'+escHtml(/late_payment|does not exist|schema cache/i.test(error.message)?'The Late Payment table is not set up yet — run supabase_migration_late_payment.sql in Supabase.':error.message)+'</div>'; return; }
     const rank=s=>({'Loan Recovery':0,'In Processing':1,'Write Off':2,'Done repayment':3})[s]??4;
     ROWS=(data||[]).slice().sort((a,b)=>rank(a.status)-rank(b.status)||Number(b.late_count||0)-Number(a.late_count||0)||String(b.updated_at).localeCompare(String(a.updated_at)));
-    render();
+    picOptions(); render();
   }
-  $('lpSearch').onclick=render; $('lpFS').onchange=render; $('lpQ').addEventListener('keydown',e=>{if(e.key==='Enter')render();});
-  $('lpClear').onclick=()=>{ $('lpQ').value=''; $('lpFS').value=''; render(); };
+  $('lpSearch').onclick=render; $('lpFS').onchange=render; $('lpFP').onchange=render; $('lpFM').onchange=render; $('lpQ').addEventListener('keydown',e=>{if(e.key==='Enter')render();});
+  $('lpClear').onclick=()=>{ $('lpQ').value=''; $('lpFS').value=''; $('lpFP').value=''; $('lpFM').value=''; render(); };
 
   // add one case
   $('lpSave').onclick=async function(){
-    const name=normTxt($('lpName').value), m=parseMoney($('lpMin').value), c=String($('lpCount').value).trim();
+    const name=normTxt($('lpName').value), c=String($('lpCount').value).trim();
     if(!name) return popup('Credit name is required.');
-    if(m==null||isNaN(m)) return popup('Minimum due is required — a number like 125.50');
     if(!/^\d+$/.test(c)) return popup('Late payment charge must be a whole number of months, e.g. 1');
+    const full=lpFull(c), m=full?null:parseMoney($('lpMin').value), fa=full?parseMoney($('lpFullAmt').value):null;
+    if(full&&(fa==null||isNaN(fa))) return popup('At 3+ late months, enter the Full amount — a number like 1250.50');
+    if(!full&&(m==null||isNaN(m))) return popup('Minimum due 20% is required — a number like 125.50');
     const open=ROWS.find(r=>normTxt(r.credit_name).toLowerCase()===name.toLowerCase()&&lpOpen(r.status));
     if(open) return popup('“'+name+'” already has an open case ('+open.status+'). Use Update on that case instead.');
     const n=Number(c), st=$('lpStatus').value||lpAuto(n);
     this.disabled=true;
-    const {error}=await sb.from('late_payment').insert({credit_name:name,min_due:m,late_count:n,late_months:normTxt($('lpMonths').value)||null,onboarding_by:normTxt($('lpOnb').value)||null,
+    const {error}=await sb.from('late_payment').insert({credit_name:name,min_due:m,full_amount:fa,late_count:n,late_months:lpMonthsText($('lpMonths').getMonths())||null,onboarding_by:normTxt($('lpOnb').value)||null,person_in_charge:normTxt($('lpPic').value)||null,
       status:st,remark:$('lpRemark').value.trim()||null});
     this.disabled=false;
     if(error) return popup(error.message);
-    popup('Case saved — status: '+st+'.'); ['lpName','lpMin','lpCount','lpMonths','lpOnb','lpRemark'].forEach(id=>$(id).value=''); $('lpStatus').value=''; showAuto(); load();
+    popup('Case saved — status: '+st+'.'); ['lpName','lpMin','lpFullAmt','lpCount','lpOnb','lpPic','lpRemark'].forEach(id=>$(id).value=''); $('lpMonths').setMonths(''); $('lpStatus').value=''; showAuto(); load();
   };
 
   // upload
@@ -960,36 +1003,42 @@ async function viewLate(){
     minimumdue:'min_due',minimumdue20:'min_due',minimumdue20usd:'min_due',mindue:'min_due',minimumdueusd:'min_due',
     latepaymentcharge:'late_count',latepaymentchargemonths:'late_count',latecount:'late_count',numberofmonths:'late_count',latemonthscount:'late_count',
     monthslate:'late_months',monthslatewhichmonths:'late_months',monthslatewhichmonth:'late_months',latemonths:'late_months',latemonth:'late_months',
+    fullamount:'full_amount',fullamountusd:'full_amount',full:'full_amount',totalamount:'full_amount',outstanding:'full_amount',outstandingamount:'full_amount',
+    personincharge:'person_in_charge',pic:'person_in_charge',incharge:'person_in_charge',assignedto:'person_in_charge',
     onboardingby:'onboarding_by',onboardedby:'onboarding_by',status:'status',remark:'remark',remarks:'remark'};
   const hkey=h=>HMAP[String(h).toLowerCase().replace(/[^a-z0-9]/g,'')];
   let PARSED=null;
-  $('lpTpl').onclick=()=>exportXlsx('late_payment_template.xlsx',['Credit name','Minimum due','Late payment charge','Months late','Onboarding by','Status','Remark'],
-    [['ABC TRADING CO.',125.5,1,'Oct-26','Sokha','','Promised to pay 20% by 15th']]);
+  $('lpTpl').onclick=()=>exportXlsx('late_payment_template.xlsx',['Credit name','Late payment charge','Minimum due','Full amount','Months late','Onboarding by','Person in charge','Status','Remark'],
+    [['ABC TRADING CO.',1,125.5,'','Oct-26','Sokha','Dara','','Promised to pay 20% by 15th'],['XYZ MART',3,'',4200,'Aug-26, Sep-26, Oct-26','Vanna','Dara','','Account blocked']]);
   $('lpFile').onchange=function(){ PARSED=null; $('lpUpBtn').disabled=true; $('lpUpInfo').textContent=''; const f=this.files[0]; if(!f) return;
     const rd=new FileReader(); rd.onload=e=>{ try{
       const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
       const raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:'',raw:true});
       if(!raw.length){ $('lpUpInfo').textContent='The file is empty.'; return; }
       const keys=Object.keys(raw[0]).map(hkey);
-      const need=['credit_name','min_due','late_count'].filter(k=>!keys.includes(k));
-      if(need.length){ this.value=''; return popup('This file is missing required column(s): '+need.map(k=>({credit_name:'Credit name',min_due:'Minimum due',late_count:'Late payment charge'})[k]).join(', ')+'. Nothing was uploaded.'); }
+      const need=['credit_name','late_count'].filter(k=>!keys.includes(k));
+      if(!keys.includes('min_due')&&!keys.includes('full_amount')) need.push('amount');
+      if(need.length){ this.value=''; return popup('This file is missing required column(s): '+need.map(k=>({credit_name:'Credit name',late_count:'Late payment charge',amount:'Minimum due or Full amount'})[k]).join(', ')+'. Nothing was uploaded.'); }
       PARSED=raw.map((r,i)=>{ const o={_row:i+2}; Object.keys(r).forEach(h=>{ const k=hkey(h); if(k&&o[k]==null){ let v=r[h]; if(v instanceof Date) v=monLbl(localISO(v)); o[k]=v; } }); return o; })
-        .filter(o=>['credit_name','min_due','late_count','late_months','onboarding_by','status','remark'].some(k=>String(o[k]??'').trim()!==''));
+        .filter(o=>['credit_name','min_due','full_amount','late_count','late_months','onboarding_by','person_in_charge','status','remark'].some(k=>String(o[k]??'').trim()!==''));
       $('lpUpInfo').textContent=PARSED.length+' row(s) ready.'; $('lpUpBtn').disabled=!PARSED.length;
     }catch(err){ popup('Could not read the file: '+err.message); } }; rd.readAsArrayBuffer(f); };
   $('lpUpBtn').onclick=async function(){ if(!PARSED) return; this.disabled=true; $('lpUpInfo').textContent='Uploading…';
     await load(); const rejects=[]; let added=0, updated=0; const seen=new Set();
     for(const p of PARSED){
-      const name=normTxt(p.credit_name), m=parseMoney(p.min_due), c=String(p.late_count??'').trim(), key=name.toLowerCase();
+      const name=normTxt(p.credit_name), m=parseMoney(p.min_due), fa=parseMoney(p.full_amount), c=String(p.late_count??'').trim(), key=name.toLowerCase();
       const F=msg=>rejects.push([p._row,name||'(blank)',msg]);
       if(!name){ F('Credit name is missing'); continue; }
-      if(m==null||isNaN(m)){ F('Minimum due is missing or not a number'); continue; }
       if(!/^\d+(\.0+)?$/.test(c)){ F('Late payment charge must be a whole number of months'); continue; }
+      if(isNaN(m)||isNaN(fa)){ F('Minimum due / Full amount must be numbers'); continue; }
+      if(lpFull(c)&&fa==null){ F('3+ late months — Full amount is required (the 20% minimum no longer applies)'); continue; }
+      if(!lpFull(c)&&m==null){ F('Under 3 late months — Minimum due 20% is required'); continue; }
       let st=''; if(String(p.status??'').trim()){ st=lpStatusFix(p.status); if(!st){ F('Unknown status "'+p.status+'" — use: '+LP_STATUS.join(', ')); continue; } }
       if(seen.has(key)){ F('Same credit name appears more than once in this file'); continue; } seen.add(key);
       const n=Math.round(Number(c)), open=ROWS.find(r=>normTxt(r.credit_name).toLowerCase()===key&&lpOpen(r.status));
-      const row={min_due:m,late_count:n};
-      if(normTxt(p.late_months)) row.late_months=normTxt(p.late_months);
+      const row={late_count:n}; if(m!=null) row.min_due=m; if(fa!=null) row.full_amount=fa;
+      if(normTxt(p.person_in_charge)) row.person_in_charge=normTxt(p.person_in_charge);
+      if(normTxt(p.late_months)){ const ks=lpParseMonths(p.late_months); row.late_months=ks.length?lpMonthsText(ks):normTxt(p.late_months); }
       if(normTxt(p.onboarding_by)) row.onboarding_by=normTxt(p.onboarding_by);
       if(String(p.remark??'').trim()) row.remark=String(p.remark).trim();
       if(open){ row.status=st||(lpIsAuto(open.status)?lpAuto(n):open.status);
@@ -1004,8 +1053,8 @@ async function viewLate(){
     load(); };
 
   $('lpExport').onclick=()=>{ const rows=cur(); if(!rows.length) return popup('Nothing to export.');
-    exportXlsx('late_payment_cases.xlsx',['Credit name','Minimum due 20% (USD)','Late payment charge (months)','Months late','Onboarding by','Status','Remark','Last update'],
-      rows.map(r=>[r.credit_name,Number(r.min_due||0),Number(r.late_count||0),r.late_months||'',r.onboarding_by||'',r.status,r.remark||'',fmtD(r.updated_at)])); };
+    exportXlsx('late_payment_cases.xlsx',['Credit name','Late payment charge (months)','Minimum due 20% (USD)','Full amount (USD)','Months late','Onboarding by','Person in charge','Status','Remark','Last update'],
+      rows.map(r=>[r.credit_name,Number(r.late_count||0),r.min_due==null?'':Number(r.min_due),r.full_amount==null?'':Number(r.full_amount),r.late_months||'',r.onboarding_by||'',r.person_in_charge||'',r.status,r.remark||'',fmtD(r.updated_at)])); };
   load();
 }
 
@@ -2008,7 +2057,7 @@ function makeMockClient(){
   const lpNow=new Date().toISOString();
   const late_payment=[['SOK DARA TRADING',220,1,'Oct-26','Sokha','In Processing','Promised 20% by 15-Nov'],['CHAN THIDA MART',540.75,3,'Aug-26, Sep-26, Oct-26','Vanna','Loan Recovery','Account blocked'],
     ['LIM SOKKOUCH SHOP',95,2,'Sep-26, Oct-26','Sokha','In Processing','Partial payment'],['NOV SONGHAY CO.',310,1,'Jul-26','Dara','Done repayment','Paid in full']]
-    .map((a,i)=>({id:i+1,credit_name:a[0],min_due:a[1],late_count:a[2],late_months:a[3],onboarding_by:a[4],status:a[5],remark:a[6],created_at:lpNow,updated_at:lpNow,
+    .map((a,i)=>({id:i+1,credit_name:a[0],min_due:a[2]>=3?null:a[1],full_amount:a[2]>=3?a[1]*5:null,late_count:a[2],late_months:a[3],onboarding_by:a[4],person_in_charge:['Dara','Sophea','Dara','Sophea'][i],status:a[5],remark:a[6],created_at:lpNow,updated_at:lpNow,
       action_log:[{at:lpNow,by:'Demo Admin',event:'Case added',status:a[5],late_count:a[2],remark:a[6]}]}));
   const lpTouch=(row,old)=>{ if(!row.status) row.status=Number(row.late_count)>=3?'Loan Recovery':'In Processing'; const t=new Date().toISOString(); row.updated_at=t;
     const log=(old&&old.action_log)||[]; if(!old||row.status!==old.status||Number(row.late_count)!==Number(old.late_count))
