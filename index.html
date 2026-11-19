@@ -76,6 +76,13 @@
   .dash-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px}
   .dgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
   .dash-card{padding:14px;margin:0;min-width:0}.dash-card.wide{grid-column:1/-1}
+  .dtabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+  .dtab{display:flex;align-items:center;gap:8px;padding:10px 16px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg,inherit);font-weight:700;font-size:14px;cursor:pointer;box-shadow:0 2px 8px rgba(16,24,40,.05)}
+  .dtab .ti{width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--t) 15%,transparent)}
+  .dtab small{display:block;font-weight:500;font-size:11px;color:var(--hint)}
+  .dtab.on{background:linear-gradient(120deg,#00324f,#004973 55%,#0a7bb5);color:#fff;border-color:transparent;box-shadow:0 4px 14px rgba(0,73,115,.3)}
+  .dtab.on small{color:rgba(255,255,255,.8)}.dtab.on .ti{background:rgba(255,255,255,.18)}
+  body.dark .dtab{background:var(--card)}
   .dash-sec{grid-column:1/-1;display:flex;align-items:center;gap:10px;margin:14px 2px 0}
   .dash-sec .si{width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;font-size:15px;background:linear-gradient(135deg,#004973,#0a7bb5);box-shadow:0 3px 8px rgba(0,73,115,.25)}
   .dash-sec b{font-size:16px;letter-spacing:.2px}.dash-sec span.h{font-size:12px;color:var(--hint)}
@@ -1074,7 +1081,6 @@ function onbCount(rows){
 }
 
 async function viewOnboarding(){
-  const admin=IS_ADMIN();
   const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
   const col=(l,h,extra)=>'<div style="display:flex;flex-direction:column'+(extra||'')+'">'+lab(l)+h+'</div>';
   const deptSel=id=>'<select id="'+id+'"><option value="">Select…</option>'+ONB_DEPTS.map(d=>'<option>'+d+'</option>').join('')+'</select>';
@@ -1118,6 +1124,7 @@ async function viewOnboarding(){
       '<button class="btn-sm" id="obClear" style="background:#6b7280;padding:9px 14px">Clear</button>'+
       '<button class="btn-sm" id="obSearch" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
       '<button class="btn-sm" id="obExport" style="background:var(--accent);padding:9px 14px">Export Excel</button></div>'+
+    '<div id="obSel" style="display:none;position:sticky;top:0;z-index:5;margin-bottom:8px;padding:9px 12px;border-radius:10px;background:linear-gradient(120deg,#7f1d1d,#b91c1c);color:#fff;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 4px 12px rgba(185,28,28,.25)"></div>'+
     '<div id="obList"><div class="empty">Loading…</div></div>';
 
   $('main').querySelectorAll('[data-ot]').forEach(b=>b.onclick=()=>{ $('main').querySelectorAll('[data-ot]').forEach(x=>x.classList.toggle('active',x===b));
@@ -1125,7 +1132,7 @@ async function viewOnboarding(){
   const showHint=()=>{ const s=$('obTwo').value.trim(); $('obHint').innerHTML=(s?'Activation: '+onbPill(onbState(s))+' ':'')+($('obReason').value.trim()?'· <b>Re-issued card</b>':(s?'· <b>New card</b>':'')); };
   $('obTwo').oninput=showHint; $('obReason').oninput=showHint;
 
-  let ROWS=[], CNT=onbCount([]);
+  let ROWS=[], CNT=onbCount([]); const SEL=new Set();
   const LIMIT=500;
   const cur=()=>{ const q=normTxt($('obQ').value).toLowerCase(), d=$('obFD').value, t=$('obFT').value, s=$('obFS').value, m=$('obFM').value, c=$('obFC').value, p=$('obFP').value;
     return ROWS.filter(r=>(!q||[r.customer_name,r.merchant_name,r.address].some(x=>normTxt(x).toLowerCase().includes(q)))&&(!d||onbDept(r.department)===d)&&
@@ -1144,23 +1151,42 @@ async function viewOnboarding(){
     $('obChips').innerHTML=tile(n,'Total onboarding cards','counted (MSD + MADD)','var(--accent)','💳','all')+tile(nw,'New onboarding',pct(nw,n)+' of cards','#2a78d6','🆕','new')+
       tile(n-nw,'Re-issue cards',pct(n-nw,n)+' of cards','#6250d6','🔁','re')+tile(by['Activated']||0,'Activated',pct(by['Activated']||0,n)+' of cards',ONB_COLOR['Activated'],'✅','Activated')+
       tile(by['Not activated']||0,'Not activated','C-Declared',ONB_COLOR['Not activated'],'⏳','Not activated')+tile(by['Closed']||0,'Closed','9-Closed',ONB_COLOR['Closed'],'🚫','Closed');
-    $('obChips').querySelectorAll('[data-oc]').forEach(b=>b.onclick=()=>{ const a=b.getAttribute('data-oc'); $('obFC').value='y'; $('obFT').value=a==='new'||a==='re'?a:''; $('obFS').value=ONB_STATES.includes(a)?a:''; render(); });
+    $('obChips').querySelectorAll('[data-oc]').forEach(b=>b.onclick=()=>{ const a=b.getAttribute('data-oc'); $('obFC').value='y'; $('obFT').value=a==='new'||a==='re'?a:''; $('obFS').value=ONB_STATES.includes(a)?a:''; SEL.clear(); render(); });
+  }
+  function selBar(){ const rows=cur(), n=SEL.size, allSel=rows.length&&rows.every(r=>SEL.has(String(r.id)));
+    $('obSel').style.display=n?'flex':'none'; if(!n) return;
+    $('obSel').innerHTML='<b style="font-size:15px">'+n.toLocaleString()+'</b> row'+(n>1?'s':'')+' selected'+
+      (!allSel&&rows.length>n?' <button class="btn-xs" id="obSelAll" style="background:rgba(255,255,255,.18)">Select all '+rows.length.toLocaleString()+' matching the filter</button>':'')+
+      '<button class="btn-xs" id="obSelNone" style="background:rgba(255,255,255,.18)">Clear selection</button>'+
+      '<button class="btn-sm" id="obDelSel" style="margin-left:auto;background:#fff;color:#b91c1c;font-weight:700;padding:7px 14px">🗑 Delete selected</button>';
+    const a=$('obSelAll'); if(a) a.onclick=()=>{ cur().forEach(r=>SEL.add(String(r.id))); render(); };
+    $('obSelNone').onclick=()=>{ SEL.clear(); render(); };
+    $('obDelSel').onclick=()=>{ const ids=[...SEL], k=ids.length;
+      confirmBox('Delete '+k.toLocaleString()+' onboarding card'+(k>1?'s':'')+'? This cannot be undone.','Delete '+k.toLocaleString(),async()=>{
+        let done=0; const errs=[];
+        for(let i=0;i<ids.length;i+=200){ const chunk=ids.slice(i,i+200); $('obSel').innerHTML='Deleting… '+Math.min(i+200,k).toLocaleString()+' / '+k.toLocaleString();
+          const {error}=await sb.from('onboarding').delete().in('id',chunk); if(error) errs.push(error.message); else done+=chunk.length; }
+        SEL.clear(); popup(errs.length?'Deleted '+done+' of '+k+'. Error: '+errs[0]:'Deleted '+done.toLocaleString()+' card'+(done>1?'s':'')+'.'); load(); }); };
   }
   function render(){
-    chips(); const rows=cur();
+    chips(); const rows=cur(); selBar();
     if(!rows.length){ $('obList').innerHTML='<div class="empty">'+(ROWS.length?'No cards match the filter.':'No onboarding cards yet — add one or upload the TWCMS file.')+'</div>'; return; }
     const cnt=rows.filter(r=>CNT.set.has(String(r.id))).length;
     $('obList').innerHTML='<div class="hint" style="margin:0 0 6px">'+rows.length.toLocaleString()+' row'+(rows.length>1?'s':'')+' · <b>'+cnt.toLocaleString()+'</b> counted'+(rows.length>LIMIT?' · showing the latest '+LIMIT+' — use the filters or Export Excel for everything':'')+'</div>'+
-      '<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr><th style="min-width:150px">Customer name</th><th style="min-width:140px">Merchant name</th><th style="min-width:180px">Address</th><th>Creating in TWCMS</th><th>TWO Status</th><th>Reason for reissue</th><th>Staff name</th><th>Department</th><th>Counted</th><th>Actions</th></tr></thead><tbody>'+
+      '<div style="overflow-x:auto"><table class="htable act wrap"><thead><tr><th style="width:34px"><input type="checkbox" id="obAll" title="Select all rows matching the filter" style="width:17px;height:17px"'+(rows.every(r=>SEL.has(String(r.id)))?' checked':'')+'></th><th style="min-width:150px">Customer name</th><th style="min-width:140px">Merchant name</th><th style="min-width:180px">Address</th><th>Creating in TWCMS</th><th>TWO Status</th><th>Reason for reissue</th><th>Staff name</th><th>Department</th><th>Counted</th><th>Actions</th></tr></thead><tbody>'+
       rows.slice(0,LIMIT).map(r=>{ const st=onbState(r.two_status), dep=onbDept(r.department), nb=CNT.newer(r), counted=CNT.set.has(String(r.id));
-        return '<tr'+(counted?'':' style="opacity:.62"')+'><td><b>'+escHtml(r.customer_name)+'</b></td><td>'+escHtml(r.merchant_name||'')+'</td><td>'+escHtml(r.address||'')+'</td>'+
+        const on=SEL.has(String(r.id));
+        return '<tr style="'+(counted?'':'opacity:.62;')+(on?'background:color-mix(in srgb,#dc2626 9%,transparent)':'')+'"><td><input type="checkbox" data-obc="'+r.id+'" style="width:17px;height:17px"'+(on?' checked':'')+'></td><td><b>'+escHtml(r.customer_name)+'</b></td><td>'+escHtml(r.merchant_name||'')+'</td><td>'+escHtml(r.address||'')+'</td>'+
         '<td style="white-space:nowrap">'+escHtml(fmtD(r.twcms_date)||'')+'</td><td><div style="white-space:nowrap">'+escHtml(r.two_status||'')+'</div>'+onbPill(st)+'</td>'+
         '<td>'+(onbIsNew(r)?'<span class="pill" style="background:color-mix(in srgb,#2a78d6 14%,transparent);color:#2a78d6">New card</span>':escHtml(r.reason_for_reissue))+'</td>'+
         '<td>'+escHtml(r.staff_name||'')+'</td><td><b>'+escHtml(dep||r.department||'')+'</b></td>'+
         '<td style="white-space:normal;min-width:120px">'+(counted?'<span style="color:var(--ok);font-weight:700">✓ Counted</span>':'<span style="color:var(--hint);font-size:12px">Not counted — newer card '+escHtml(nb?fmtD(nb.twcms_date):'')+'</span>')+'</td>'+
         '<td style="white-space:nowrap"><button class="btn-xs" style="background:var(--ok)" data-obe="'+r.id+'">Edit</button>'+
-        (admin?' <button class="btn-xs" style="background:var(--danger)" data-obd="'+r.id+'">Remove</button>':'')+'</td></tr>'; }).join('')+'</tbody></table></div>';
+        ' <button class="btn-xs" style="background:var(--danger)" data-obd="'+r.id+'">Remove</button></td></tr>'; }).join('')+'</tbody></table></div>';
     const find=id=>ROWS.find(x=>String(x.id)===String(id));
+    $('obAll').onchange=function(){ if(this.checked) rows.forEach(r=>SEL.add(String(r.id))); else rows.forEach(r=>SEL.delete(String(r.id))); render(); };
+    $('obList').querySelectorAll('[data-obc]').forEach(c=>c.onchange=function(){ const id=this.getAttribute('data-obc'); this.checked?SEL.add(id):SEL.delete(id);
+      this.closest('tr').style.background=this.checked?'color-mix(in srgb,#dc2626 9%,transparent)':''; const all=rows.every(r=>SEL.has(String(r.id))); $('obAll').checked=all; selBar(); });
     $('obList').querySelectorAll('[data-obe]').forEach(b=>b.onclick=()=>{ const r=find(b.getAttribute('data-obe')); if(!r) return;
       editModal('Edit card — '+(r.customer_name||''),[
         {key:'two_status',label:'TWO Status',value:r.two_status,hint:'C-Declared = not activated · 9-Closed = closed · anything else = activated.'},
@@ -1192,11 +1218,12 @@ async function viewOnboarding(){
     const {data,error}=await fetchAll('onboarding','id,customer_name,merchant_name,address,twcms_date,two_status,reason_for_reissue,staff_name,department,created_at,updated_at');
     if(error){ $('obList').innerHTML='<div class="empty">'+escHtml(/onboarding|does not exist|schema cache/i.test(error.message)?'The Onboarding table is not set up yet — run supabase_migration_onboarding.sql in Supabase.':error.message)+'</div>'; return; }
     ROWS=(data||[]).slice().sort((a,b)=>String(b.twcms_date).localeCompare(String(a.twcms_date))||String(b.created_at||'').localeCompare(String(a.created_at||'')));
-    CNT=onbCount(ROWS); lists(); render();
+    CNT=onbCount(ROWS); const have=new Set(ROWS.map(r=>String(r.id))); [...SEL].forEach(id=>{ if(!have.has(id)) SEL.delete(id); }); lists(); render();
   }
-  $('obSearch').onclick=render; ['obFD','obFT','obFS','obFM','obFC','obFP'].forEach(id=>$(id).onchange=render);
-  $('obQ').addEventListener('keydown',e=>{if(e.key==='Enter')render();});
-  $('obClear').onclick=()=>{ ['obQ','obFD','obFT','obFS','obFM','obFC','obFP'].forEach(id=>$(id).value=''); render(); };
+  const reRender=()=>{ SEL.clear(); render(); };   // a new filter starts a new selection
+  $('obSearch').onclick=reRender; ['obFD','obFT','obFS','obFM','obFC','obFP'].forEach(id=>$(id).onchange=reRender);
+  $('obQ').addEventListener('keydown',e=>{if(e.key==='Enter')reRender();});
+  $('obClear').onclick=()=>{ ['obQ','obFD','obFT','obFS','obFM','obFC','obFP'].forEach(id=>$(id).value=''); reRender(); };
 
   // add one card
   $('obSave').onclick=async function(){
@@ -1305,12 +1332,26 @@ async function viewDashboard(){
       '<button class="btn-sm" id="dGo" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
       '<div class="hint" id="dScope" style="margin:0 0 0 auto;align-self:center;color:rgba(255,255,255,.9)"></div>'+
     '</div></div>'+
+    '<div class="dtabs" id="dTabs"></div>'+
     '<div class="dash-kpis" id="dKpi"><div class="empty">Loading…</div></div>'+
     '<div class="dgrid" id="dGrid"></div>';
+  if(!DASH.tab){ try{ DASH.tab=localStorage.getItem('dashTab')||''; }catch(e){} }
+  if(!['onb','del','col'].includes(DASH.tab)) DASH.tab='onb';
+  const TABS=[['onb','🧾','Onboarding','MSD & MADD cards','#0b8a6f'],['del','🚚','Card Delivery','issued, delivered, on hold','#2a78d6'],['col','💵','Collections & Fees','late payment, interest fee','#d03b3b']];
+  $('dTabs').innerHTML=TABS.map(t=>'<button class="dtab" data-dt="'+t[0]+'" style="--t:'+t[4]+'"><span class="ti">'+t[1]+'</span><span style="text-align:left">'+t[2]+'<small>'+t[3]+'</small></span></button>').join('');
+  $('dTabs').querySelectorAll('[data-dt]').forEach(b=>b.onclick=()=>{ DASH.tab=b.getAttribute('data-dt'); try{ localStorage.setItem('dashTab',DASH.tab); }catch(e){} dashTabShow(); dashRender(); });
+  dashTabShow();
   $('dRange').onchange=()=>{ $('dCustom').style.display=$('dRange').value==='custom'?'flex':'none'; if($('dRange').value!=='custom') dashLoad(); };
   $('dGo').onclick=dashLoad;
   try{ await loadChartJs(); }catch(e){ $('dKpi').innerHTML='<div class="empty">'+escHtml(e.message)+'</div>'; return; }
   dashLoad();
+}
+/* show only the chosen dashboard tab; the Period filter and delivery tiles belong to Card Delivery */
+function dashTabShow(){
+  const t=DASH.tab; document.querySelectorAll('#dTabs [data-dt]').forEach(b=>b.classList.toggle('on',b.getAttribute('data-dt')===t));
+  const f=document.querySelector('.dash-filters'); if(f) f.style.display=t==='del'?'':'none';
+  if($('dKpi')) $('dKpi').style.display=t==='del'?'':'none';
+  document.querySelectorAll('#dGrid [data-tab]').forEach(e=>e.style.display=e.getAttribute('data-tab')===t?'':'none');
 }
 function dashRange(){
   const v=$('dRange').value, t=new Date(); t.setHours(0,0,0,0);
@@ -1375,21 +1416,22 @@ function dashRender(){
 
   // ---------- layout ----------
   const DC={o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
-  const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
+  const tabOf=id=>id[0]==='o'?'onb':(id==='l1'||id==='f1')?'col':'del';
+  const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" data-tab="'+tabOf(id)+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
-  const sec=(ic,t,h)=>'<div class="dash-sec"><span class="si">'+ic+'</span><b>'+t+'</b>'+(h?'<span class="h">'+h+'</span>':'')+'</div>';
+  const sec=(ic,t,h,tab)=>'<div class="dash-sec" data-tab="'+tab+'"><span class="si">'+ic+'</span><b>'+t+'</b>'+(h?'<span class="h">'+h+'</span>':'')+'</div>';
   $('dGrid').innerHTML=
-    sec('🧾','Onboarding','MSD & MADD · counted cards only · by Creating in TWCMS · use the year box')+
+    sec('🧾','Onboarding','MSD & MADD · counted cards only · by Creating in TWCMS · use the year box','onb')+
     box('o1','Onboarding overview','New card = blank Reason for reissue · a person (same name + address) counts one new card — the latest · C-Declared = not activated · 9-Closed = closed',true)+
     box('o2','New onboarding: MSD vs MADD','New cards per month by department',true)+
     box('o3','Card activation rate','Activated (incl. later closed) vs C-Declared')+
     box('o4','Top 5 onboarding staff','Counted cards by staff · new + re-issue')+
-    sec('📈','Monthly trends','each chart has its own year box')+
+    sec('📈','Monthly trends','cards issued vs delivered · use the year box','del')+
     box('c0','Cards issued vs Delivered','Issued = cards by create date month · Delivered = records with status Delivered, by delivery month',true)+
-    sec('💵','Collections & fee income','Late Payment and Interest Rate pages')+
+    sec('💵','Collections & fee income','Late Payment and Interest Rate pages · each chart has its own year box','col')+
     box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = Repayment date',true)+
     box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · use the year box to filter',true)+
-    sec('🚚','Delivery operations','follows the Period filter at the top')+
+    sec('🚚','Delivery operations','follows the Period filter at the top','del')+
     box('c1','Delivery status','Cards issued in the period, by latest delivery status')+
     box('c2','Pending cards by age','Days since the card was issued (not yet delivered)')+
     box('c3','Deliveries over time','Records with status Delivered, by delivery date',true)+
@@ -1397,6 +1439,7 @@ function dashRender(){
     box('c5','Top 10 branches','Delivery records by branch code · delivered rate in tooltip')+
     box('c6','New vs reissue cards','Cards issued per period',true)+
     box('c7','Top delivery staff','Delivery records in the period',true);
+  dashTabShow();
   const EXP={};
   const canvas=(id,h)=>{ $(id).innerHTML='<div style="position:relative;height:'+(h||260)+'px"><canvas></canvas></div>'; return $(id).querySelector('canvas'); };
   const empty=(id,msg)=>{ $(id).innerHTML='<div class="empty" style="padding:30px 0">'+(msg||'No data for this period.')+'</div>'; };
