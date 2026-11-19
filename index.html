@@ -2012,9 +2012,9 @@ function settingsHolder(){
   const lab=t=>'<label class="hint" style="margin:0 0 2px">'+t+'</label>';
   $('cBar').innerHTML='<div class="card" style="padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">'+
     '<div style="display:flex;flex-direction:column;flex:1;min-width:200px">'+lab('Card holder')+'<input id="chSearch" placeholder="Search card holder…"></div>'+
-    '<div style="display:flex;flex-direction:column">'+lab('Reason')+'<select id="cReason" style="width:190px"><option value="">All</option><option value="__new">New card (no reason)</option><option value="__re">All re-issues</option></select></div>'+
     '<div style="display:flex;flex-direction:column">'+lab('From (create date)')+'<input type="date" id="cFrom" style="width:150px"></div>'+
     '<div style="display:flex;flex-direction:column">'+lab('To (create date)')+'<input type="date" id="cTo" style="width:150px"></div>'+
+    '<div style="display:flex;flex-direction:column">'+lab('Reason')+'<select id="cReason" style="width:190px"><option value="">All</option><option value="__new">New card (no reason)</option><option value="__re">All re-issues</option></select></div>'+
     '<div style="display:flex;flex-direction:column">'+lab('Card status')+'<select id="cStatus" style="width:170px"><option value="">All</option><option value="__none">Not yet submitted</option>'+[...new Set(OPTIONS.cardStatus||[])].sort().map(x=>'<option>'+escHtml(x)+'</option>').join('')+'</select></div>'+
     '<button class="btn-sm" id="cClear" style="background:var(--hint);padding:9px 14px">Clear</button>'+
     '<button class="btn-sm" id="cSearch" style="background:var(--ok);padding:9px 14px">🔍 Search</button>'+
