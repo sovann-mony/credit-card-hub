@@ -1091,7 +1091,6 @@ async function viewOnboarding(){
       '<b>TWO Status:</b> '+onbPill('Not activated')+' C-Declared · '+onbPill('Closed')+' 9-Closed · '+onbPill('Activated')+' any other status.<br>'+
       '<b>Reason for reissue</b> blank = <b>new card</b>; filled = <b>re-issued card</b> (a person can have many re-issues).<br>'+
       'Same <b>customer name + address</b> = same person. A person has only one new card — if there are more, only the <b>latest</b> is counted.</div></div>'+
-    '<div id="obChips" class="dash-kpis" style="margin-bottom:10px"></div>'+
     '<div style="display:flex;gap:8px;margin-bottom:10px"><button class="setTab active" data-ot="add">Add card</button><button class="setTab" data-ot="up">Upload file</button></div>'+
     '<div class="card" id="otAdd" style="padding:14px;margin-bottom:12px">'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">'+
@@ -1145,14 +1144,6 @@ async function viewOnboarding(){
     $('obStaffList').innerHTML=staff.map(n=>'<option value="'+escHtml(n)+'">').join('');
     $('obTwoList').innerHTML=[...new Set(['C-Declared','9-Closed'].concat(uniq(r=>r.two_status)))].map(n=>'<option value="'+escHtml(n)+'">').join('');
   }
-  function chips(){
-    const C=ROWS.filter(r=>CNT.set.has(String(r.id))), n=C.length, nw=C.filter(onbIsNew).length, by={}; C.forEach(r=>{ const k=onbState(r.two_status); by[k]=(by[k]||0)+1; });
-    const tile=(v,l,s,c,ic,act)=>'<div class="kpi" style="--k:'+c+';cursor:pointer" data-oc="'+act+'"><div class="ic">'+ic+'</div><div class="n">'+v.toLocaleString()+'</div><div class="l">'+l+'</div><div class="s">'+s+'</div></div>';
-    $('obChips').innerHTML=tile(n,'Total onboarding cards','counted (MSD + MADD)','var(--accent)','💳','all')+tile(nw,'New onboarding',pct(nw,n)+' of cards','#2a78d6','🆕','new')+
-      tile(n-nw,'Re-issue cards',pct(n-nw,n)+' of cards','#6250d6','🔁','re')+tile(by['Activated']||0,'Activated',pct(by['Activated']||0,n)+' of cards',ONB_COLOR['Activated'],'✅','Activated')+
-      tile(by['Not activated']||0,'Not activated','C-Declared',ONB_COLOR['Not activated'],'⏳','Not activated')+tile(by['Closed']||0,'Closed','9-Closed',ONB_COLOR['Closed'],'🚫','Closed');
-    $('obChips').querySelectorAll('[data-oc]').forEach(b=>b.onclick=()=>{ const a=b.getAttribute('data-oc'); $('obFC').value='y'; $('obFT').value=a==='new'||a==='re'?a:''; $('obFS').value=ONB_STATES.includes(a)?a:''; SEL.clear(); render(); });
-  }
   function selBar(){ const rows=cur(), n=SEL.size, allSel=rows.length&&rows.every(r=>SEL.has(String(r.id)));
     $('obSel').style.display=n?'flex':'none'; if(!n) return;
     $('obSel').innerHTML='<b style="font-size:15px">'+n.toLocaleString()+'</b> row'+(n>1?'s':'')+' selected'+
@@ -1169,7 +1160,7 @@ async function viewOnboarding(){
         SEL.clear(); popup(errs.length?'Deleted '+done+' of '+k+'. Error: '+errs[0]:'Deleted '+done.toLocaleString()+' card'+(done>1?'s':'')+'.'); load(); }); };
   }
   function render(){
-    chips(); const rows=cur(); selBar();
+    const rows=cur(); selBar();
     if(!rows.length){ $('obList').innerHTML='<div class="empty">'+(ROWS.length?'No cards match the filter.':'No onboarding cards yet — add one or upload the TWCMS file.')+'</div>'; return; }
     const cnt=rows.filter(r=>CNT.set.has(String(r.id))).length;
     $('obList').innerHTML='<div class="hint" style="margin:0 0 6px">'+rows.length.toLocaleString()+' row'+(rows.length>1?'s':'')+' · <b>'+cnt.toLocaleString()+'</b> counted'+(rows.length>LIMIT?' · showing the latest '+LIMIT+' — use the filters or Export Excel for everything':'')+'</div>'+
