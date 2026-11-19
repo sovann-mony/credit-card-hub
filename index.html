@@ -1132,7 +1132,7 @@ function dashRender(){
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
   $('dGrid').innerHTML=
     box('c0','Cards created vs Delivered','Created = cards by create month · Delivered = records with status Delivered, by delivery month',true)+
-    box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment = month the case became Done repayment',true)+
+    box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = month the status was changed to Done repayment',true)+
     box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · use the year box to filter',true)+
     box('c1','Delivery status','Cards created in the period, by latest delivery status')+
     box('c2','Pending cards by age','Days since the card was created (not yet delivered)')+
@@ -1220,7 +1220,9 @@ function dashRender(){
   // l1) late payment vs repayment (monthly) + 3-month cases resolved vs outstanding
   { const LP=st.late||[];
     const lateKey=r=>lpParseMonths(r.late_months)[0]||null;                      // yyyy-mm the merchant was late
-    const repaidKey=r=>{ if(r.status!=='Done repayment') return null;             // yyyy-mm the case became Done repayment
+    // repayment month: under 3 months = same month as the late payment; 3+ months = month the status became Done repayment
+    const repaidKey=r=>{ if(r.status!=='Done repayment') return null;
+      if(!lpFull(r.late_count)) return lateKey(r);
       const ev=(Array.isArray(r.action_log)?r.action_log:[]).filter(e=>e.status==='Done repayment').map(e=>e.at).sort()[0];
       const d=localISO(ev||r.updated_at); return d?d.slice(0,7):null; };
     const yrs=[...new Set(LP.map(lateKey).concat(LP.map(repaidKey)).filter(Boolean).map(k=>k.slice(0,4)))].sort().reverse();
