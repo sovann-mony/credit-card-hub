@@ -1426,7 +1426,7 @@ function dashRender(){
     tile(hold,'On Hold','by submit date',P.warn,'⏸')+tile(subs.length,'Submissions','delivery records in period',P.s3,'📦');
 
   // ---------- layout ----------
-  const DC={o5:P.warn,o6:P.s4,k1:P.crit,k2:P.warn,k3:P.s1,o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
+  const DC={o5:P.warn,o6:P.s4,k1:P.crit,k3:P.s1,o1:P.s3,o2:P.s1,o3:P.good,o4:P.s4,c0:P.s2,f1:P.s1,l1:P.crit,c1:P.good,c2:P.serious,c3:P.s1,c4:P.warn,c5:P.s4,c6:P.s3,c7:'var(--accent)'};
   const tabOf=id=>id[0]==='o'?'onb':(id==='l1'||id==='f1'||id[0]==='k')?'col':'del';
   const box=(id,title,sub,wide)=>'<div class="card dash-card'+(wide?' wide':'')+'" data-tab="'+tabOf(id)+'" style="--dc:'+DC[id]+'"><div class="dash-head"><div><div class="dash-title">'+title+'</div><div class="hint" style="margin:0">'+sub+'</div></div>'+
     '<button class="btn-xs dx" style="white-space:nowrap;flex:none" data-dx="'+id+'">⬇ Excel</button></div><div class="dash-body" id="'+id+'"></div></div>';
@@ -1444,7 +1444,6 @@ function dashRender(){
     sec('💵','Collections & fee income','Late Payment and Interest Rate pages · by month in the Period','col')+
     box('k1','Collections overview','Open cases and Loan Recovery = right now · other totals = the Period',true)+
     box('l1','Late Payment vs Repayment','Cases from the Late Payment page · Late = by Months late · Repayment (Done repayment) = same month as the late payment; 3+ month cases = Repayment date',true)+
-    box('k2','Early warning — merchants at 2 late months','Open cases that will be blocked next month (full repayment) if still unpaid · right now',true)+
     box('k3','Person in charge performance','Late payment cases with Months late in the Period',true)+
     box('f1','Interest Fee & Late Payment Fee','Monthly fee income (USD) · entered on the Interest Rate page · months in the Period',true)+
     sec('🚚','Delivery operations','cards issued and delivery records in the Period','del')+
@@ -1692,19 +1691,6 @@ function dashRender(){
       tile(WO.length,'Written off',scopeP+' · '+money0(sum(WO)),P.none,'🗂️')+
       (st.fees===null?'':tile(money0(feeTot),'Fee income',scopeP+' · interest + late fee',P.s2,'💰'))+'</div>';
 
-    // k2) early warning
-    EXP.k2={h:['Credit name','Late payment charge (months)','Months late','Minimum due 20% (USD)','Person in charge','Onboarding by','Last update'],
-      r:WARN.map(r=>[r.credit_name,Number(r.late_count),r.late_months||'',r.min_due==null?'':Number(r.min_due),r.person_in_charge||'',r.onboarding_by||'',fmtD(r.updated_at)])};
-    if(st.late===null) empty('k2','The Late Payment table is not set up yet.');
-    else if(!WARN.length) empty('k2','No open cases at 2 late months right now 🎉');
-    else $('k2').innerHTML='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:9px 12px;border-radius:10px;background:color-mix(in srgb,'+P.warn+' 12%,var(--bg));border:1px solid color-mix(in srgb,'+P.warn+' 35%,transparent)">'+
-        '<span style="font-size:18px">⚠️</span><span><b>'+WARN.length+' merchant'+(WARN.length>1?'s':'')+'</b> will reach 3 late months next month — account blocked and <b>full repayment</b> required. Collect at least the 20% minimum before the 15th.</span>'+
-        '<span style="margin-left:auto;font-weight:800;font-size:16px">'+money(sum(WARN))+'</span></div>'+
-      '<div style="overflow-x:auto"><table class="htable"><thead><tr><th>Credit name</th><th>Months late</th><th style="text-align:right">Minimum due 20%</th><th>Person in charge</th><th>Onboarding by</th><th>Last update</th></tr></thead><tbody>'+
-      WARN.slice(0,15).map(r=>'<tr><td style="font-weight:600">'+escHtml(r.credit_name)+'</td><td>'+escHtml(r.late_months||'')+'</td><td style="text-align:right;font-weight:700">'+money(r.min_due||0)+'</td>'+
-        '<td>'+(normTxt(r.person_in_charge)?escHtml(r.person_in_charge):'<span style="color:'+P.crit+';font-weight:600">Not assigned</span>')+'</td><td>'+escHtml(r.onboarding_by||'')+'</td><td style="white-space:nowrap">'+escHtml(fmtD(r.updated_at)||'')+'</td></tr>').join('')+
-      '</tbody></table></div>'+(WARN.length>15?'<div class="hint" style="margin:6px 0 0">Showing 15 of '+WARN.length+' — Excel has the full list.</div>':'');
-
     // k3) person in charge performance (cases late in the period)
     const PC={}; LATE.forEach(r=>{ const nm=normTxt(r.person_in_charge)||'(not assigned)', k=nm.toLowerCase(); const x=PC[k]=PC[k]||{nm,t:0,open:0,rec:0,done:0,wo:0,out:0,paid:0};
       x.t++; if(r.status==='Done repayment'){ x.done++; x.paid+=lpAmt(r); } else if(r.status==='Write Off') x.wo++; else { x.open++; x.out+=lpAmt(r); if(r.status==='Loan Recovery') x.rec++; } });
@@ -1893,7 +1879,7 @@ function dashRender(){
       '</tbody></table></div>'+(staff.length>10?'<div class="hint" style="margin:6px 0 0">Showing top 10 of '+staff.length+' — Excel export has everyone.</div>':'');
 
   // Excel buttons
-  const names={o5:'not_activated_cards_by_age',o6:'onboarding_staff_performance',k1:'collections_overview',k2:'early_warning_2_late_months',k3:'person_in_charge_performance',o1:'onboarding_overview',o2:'new_onboarding_msd_vs_madd',o3:'card_activation_rate',o4:'top_onboarding_staff',c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
+  const names={o5:'not_activated_cards_by_age',o6:'onboarding_staff_performance',k1:'collections_overview',k3:'person_in_charge_performance',o1:'onboarding_overview',o2:'new_onboarding_msd_vs_madd',o3:'card_activation_rate',o4:'top_onboarding_staff',c0:'issued_vs_delivered',l1:'late_payment_vs_repayment',f1:'interest_and_late_fees',c1:'delivery_status',c2:'pending_by_age',c3:'deliveries_over_time',c4:'deliveries_by_unit',c5:'deliveries_by_branch',c6:'new_vs_reissue',c7:'top_delivery_staff'};
   $('dGrid').querySelectorAll('[data-dx]').forEach(b=>b.onclick=()=>{ const id=b.getAttribute('data-dx'), e=EXP[id];
     if(!e||!e.r.length) return popup('Nothing to export for this period.');
     if(id==='f1'||id==='l1'||id[0]==='o'||id[0]==='k') return exportXlsx(names[id]+'.xlsx',e.h,e.r);
