@@ -1262,7 +1262,10 @@ function dashRender(){
           plugins:{legend:{...legend,position:'top'},tooltip:{...tt,callbacks:{title:it=>it[0].label+' '+Y}}}}}));
       if(three.length){
         const pctLbl={id:'lpPct',afterDatasetsDraw(ch){ const c=ch.ctx, m=ch.getDatasetMeta(0), tot=three.length; c.save(); c.font='700 12px '+Chart.defaults.font.family; c.fillStyle='#fff'; c.textAlign='center'; c.textBaseline='middle';
-          m.data.forEach((a,i)=>{ const v=ch.data.datasets[0].data[i]; if(!v) return; const p=a.tooltipPosition(); c.fillText((v*100/tot).toFixed(1)+'%',p.x,p.y); }); c.restore(); }};
+          m.data.forEach((a,i)=>{ const v=ch.data.datasets[0].data[i]; if(!v) return; const p=a.tooltipPosition(); c.fillText((v*100/tot).toFixed(1)+'%',p.x,p.y); });
+          if(m.data[0]){ const cx=m.data[0].x, cy=m.data[0].y; c.fillStyle=P.text; c.font='800 28px '+Chart.defaults.font.family; c.fillText(String(tot),cx,cy-8);
+            c.fillStyle=P.muted; c.font='500 12px '+Chart.defaults.font.family; c.fillText('Total Case'+(tot===1?'':'s'),cx,cy+16); }
+          c.restore(); }};
         DASH.charts.push(new Chart($('l1d'),{type:'doughnut',plugins:[pctLbl],data:{labels:gKeys,datasets:[{data:gKeys.map(k=>grp[k].length),backgroundColor:gKeys.map(k=>gCol[k]),borderColor:P.surface,borderWidth:2}]},
           options:{maintainAspectRatio:false,cutout:'55%',plugins:{legend:{...legend,position:'bottom'},tooltip:{...tt,callbacks:{label:c=>' '+c.label+': '+c.raw+' case'+(c.raw===1?'':'s')+' · '+money(amt(grp[c.label]))}}}}}));
       }
