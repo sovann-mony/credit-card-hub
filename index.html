@@ -881,7 +881,7 @@ async function viewLate(){
       '<span class="hint" id="lpAutoHint" style="margin:0"></span></div></div>'+
     '<div class="card" id="ltUp" style="padding:14px;margin-bottom:12px;display:none">'+
       '<div class="hint" style="margin:0 0 8px">Excel or CSV with columns: <b>Credit name</b> (required), <b>Late payment charge</b> = number of months (required), <b>Minimum due</b> (required under 3 months), <b>Full amount</b> (required for 3+ months), <b>Months late</b> (one month, e.g. Oct-26), <b>Onboarding by</b>, <b>Person in charge</b>, <b>Status</b>, <b>Remark</b>.<br>'+
-      'If a credit name already has an <b>open</b> case, that case is <b>updated</b>; otherwise a new case is added. Blank Status = automatic by late months.</div>'+
+      'Each credit name has <b>one case only</b>: if the credit name already exists, that case is <b>updated</b> (no duplicate is added); otherwise a new case is added. Blank Status = keep the current status (automatic by late months for a new case).</div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><input type="file" id="lpFile" accept=".xlsx,.xls,.csv" style="max-width:320px">'+
       '<button class="btn-sm" id="lpUpBtn" style="background:var(--accent);padding:9px 16px" disabled>Upload</button>'+
       '<button class="btn-sm" id="lpTpl" style="background:#6b7280;padding:9px 14px">⬇ Template</button><span class="hint" id="lpUpInfo" style="margin:0"></span></div></div>'+
@@ -944,6 +944,7 @@ async function viewLate(){
           const n=Number(String(v.late_count).trim()), m=parseMoney(v.min_due), fa=parseMoney(v.full_amount);
           if(admin&&v.repayment_date&&v.repayment_date>localISO(new Date())) return 'Repayment date cannot be in the future.';
           if(!normTxt(v.credit_name)) return 'Credit name is required.';
+          if(ROWS.some(x=>String(x.id)!==String(r.id)&&normTxt(x.credit_name).toLowerCase()===normTxt(v.credit_name).toLowerCase())) return 'Another case already uses the credit name “'+normTxt(v.credit_name)+'”. A credit name can only have one case.';
           if(!/^\d+$/.test(String(v.late_count).trim())) return 'Late payment charge must be a whole number of months.';
           if(isNaN(m)||isNaN(fa)) return 'Amounts must be numbers, e.g. 125.50';
           if(lpFull(n)&&fa==null) return 'At 3+ late months, enter the Full amount (the 20% minimum no longer applies).';
@@ -986,14 +987,15 @@ async function viewLate(){
     const full=lpFull(c), m=full?null:parseMoney($('lpMin').value), fa=full?parseMoney($('lpFullAmt').value):null;
     if(full&&(fa==null||isNaN(fa))) return popup('At 3+ late months, enter the Full amount — a number like 1250.50');
     if(!full&&(m==null||isNaN(m))) return popup('Minimum due 20% is required — a number like 125.50');
-    const open=ROWS.find(r=>normTxt(r.credit_name).toLowerCase()===name.toLowerCase()&&lpOpen(r.status));
-    if(open) return popup('“'+name+'” already has an open case ('+open.status+'). Use Update on that case instead.');
+    const dup=ROWS.find(r=>normTxt(r.credit_name).toLowerCase()===name.toLowerCase());
+    if(dup){ $('lpQ').value=name; $('lpFS').value=''; $('lpFP').value=''; $('lpFM').value=''; render();
+      return popup('“'+dup.credit_name+'” already exists (status: '+dup.status+'). A credit name can only have one case — click Update on that case below to change its information.'); }
     const n=Number(c), st=$('lpStatus').value||lpAuto(n);
     this.disabled=true;
     const {error}=await sb.from('late_payment').insert({credit_name:name,min_due:m,full_amount:fa,late_count:n,late_months:lpMonthVal($('lpMonths').value),onboarding_by:normTxt($('lpOnb').value)||null,person_in_charge:normTxt($('lpPic').value)||null,
       status:st,remark:$('lpRemark').value.trim()||null});
     this.disabled=false;
-    if(error) return popup(error.message);
+    if(error) return popup(/duplicate|unique/i.test(error.message)?'“'+name+'” already exists — a credit name can only have one case. Use Update on that case instead.':error.message);
     popup('Case saved — status: '+st+'.'); ['lpName','lpMin','lpFullAmt','lpCount','lpMonths','lpOnb','lpPic','lpRemark'].forEach(id=>$(id).value=''); $('lpStatus').value=''; showAuto(); load();
   };
 
@@ -1034,7 +1036,7 @@ async function viewLate(){
       if(!lpFull(c)&&m==null){ F('Under 3 late months — Minimum due 20% is required'); continue; }
       let st=''; if(String(p.status??'').trim()){ st=lpStatusFix(p.status); if(!st){ F('Unknown status "'+p.status+'" — use: '+LP_STATUS.join(', ')); continue; } }
       if(seen.has(key)){ F('Same credit name appears more than once in this file'); continue; } seen.add(key);
-      const n=Math.round(Number(c)), open=ROWS.find(r=>normTxt(r.credit_name).toLowerCase()===key&&lpOpen(r.status));
+      const n=Math.round(Number(c)), open=ROWS.find(r=>normTxt(r.credit_name).toLowerCase()===key);   // one case per credit name: update it
       const row={late_count:n}; if(m!=null) row.min_due=m; if(fa!=null) row.full_amount=fa;
       if(normTxt(p.person_in_charge)) row.person_in_charge=normTxt(p.person_in_charge);
       if(normTxt(p.late_months)) row.late_months=lpMonthVal(p.late_months);
@@ -1043,7 +1045,7 @@ async function viewLate(){
       if(open){ row.status=st||(lpIsAuto(open.status)?lpAuto(n):open.status);
         const {error}=await sb.from('late_payment').update(row).eq('id',open.id); if(error) F(error.message); else updated++; }
       else { row.credit_name=name; row.status=st||lpAuto(n);
-        const {error}=await sb.from('late_payment').insert(row); if(error) F(error.message); else added++; }
+        const {error}=await sb.from('late_payment').insert(row); if(error) F(/duplicate|unique/i.test(error.message)?'Credit name already exists — one case per credit name':error.message); else added++; }
     }
     $('lpFile').value=''; PARSED=null; $('lpUpInfo').textContent='';
     uploadSummary({total:added+updated+rejects.length,added:added+updated,addedLabel:'Added '+added+' · Updated '+updated,
